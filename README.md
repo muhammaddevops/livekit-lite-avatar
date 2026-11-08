@@ -4,6 +4,7 @@
 [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![livekit-agents 1.8](https://img.shields.io/badge/livekit--agents-1.8-blue)
+[![Release](https://img.shields.io/github/v/release/muhammaddevops/livekit-lite-avatar)](https://github.com/muhammaddevops/livekit-lite-avatar/releases)
 
 A lip-synced video avatar for [LiveKit Agents](https://github.com/livekit/agents) that you host yourself, on CPU:
 no GPU, no avatar vendor and no per-minute fees. It plugs into an `AgentSession` the way LiveKit's hosted avatar
@@ -64,7 +65,7 @@ keeps one spare loaded. Or run the [Docker image](#docker).
 **2. Install the package where your agent runs.** It is small and doesn't need torch:
 
 ```bash
-pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git"
+pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git@v0.1.0"
 ```
 
 **3. Start the avatar with your session.**
@@ -250,10 +251,11 @@ secret on the agent side), and keep it behind a firewall: the secret is its only
 ### Docker
 
 ```bash
-docker build -t livekit-lite-avatar-renderer .
-docker run -p 8791:8791 -v liteavatar-data:/data -e LITEAVATAR_SECRET=change-me livekit-lite-avatar-renderer
+docker run -p 8791:8791 -v liteavatar-data:/data -e LITEAVATAR_SECRET=change-me \
+  ghcr.io/muhammaddevops/livekit-lite-avatar-renderer:0.1.0
 ```
 
+Published for linux/amd64 and linux/arm64 with each release (or `docker build -t livekit-lite-avatar-renderer .`).
 The image is CPU only and runs as a non-root user. LiteAvatar's assets aren't baked in (see
 [Licences](#licences)): the first start downloads them into `/data`, so keep that on a volume.
 
