@@ -47,7 +47,7 @@ class Pool:
     async def _spawn(self) -> None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "livekit_liteavatar.renderer", "worker", "--warm",
+                sys.executable, "-m", "livekit_lite_avatar.renderer", "worker", "--warm",
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 env={**os.environ, **self.settings.to_env()},
             )

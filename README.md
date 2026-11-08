@@ -1,4 +1,4 @@
-# livekit-liteavatar
+# livekit-lite-avatar
 
 A self-hosted, lip-synced video avatar for [LiveKit Agents](https://github.com/livekit/agents) (Python,
 `livekit-agents` 1.8.x). It runs on CPU: no GPU, no avatar vendor and no per-minute fees.
@@ -9,7 +9,7 @@ draws the face with Alibaba's [LiteAvatar](https://github.com/HumanAIGC/lite-ava
 into the room.
 
 ```python
-from livekit_liteavatar import LiteAvatarSession
+from livekit_lite_avatar import LiteAvatarSession
 
 avatar = LiteAvatarSession(renderer_url="http://127.0.0.1:8791")
 await avatar.start(session, room=ctx.room)
@@ -59,7 +59,7 @@ scripts/setup-renderer.sh
 
 This creates `.venv` with the renderer dependencies (it uses [uv](https://docs.astral.sh/uv/) if installed, otherwise
 pip), then downloads LiteAvatar's code from GitHub and its weights and the default presenter from ModelScope into
-`~/.cache/livekit-liteavatar` (`LITEAVATAR_HOME`). Nothing from LiteAvatar is included in this repository.
+`~/.cache/livekit-lite-avatar` (`LITEAVATAR_HOME`). Nothing from LiteAvatar is included in this repository.
 
 Check it works, offline (WAV in, MP4 out, prints the real-time factor):
 
@@ -85,12 +85,12 @@ time), so the first session doesn't wait for models. `GET /health` shows how man
 In your agent's environment (any Python 3.10+; it doesn't need torch):
 
 ```bash
-pip install "livekit-liteavatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git"
+pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git"
 ```
 
 ```python
 from livekit.agents import AgentSession, JobContext
-from livekit_liteavatar import LiteAvatarError, LiteAvatarSession
+from livekit_lite_avatar import LiteAvatarError, LiteAvatarSession
 
 async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession(stt=..., llm=..., tts=..., vad=...)
@@ -149,7 +149,7 @@ the server passes its settings on to every worker it starts.
 | Session limit | `LITEAVATAR_MAX_SESSION_S` | `--max-session-s` | 1800 | a worker leaves after this long |
 | Address | `LITEAVATAR_HOST`, `LITEAVATAR_PORT` | `--host`, `--port` | 127.0.0.1, 8791 | |
 | Secret | `LITEAVATAR_SECRET` | | none | if set, requests need a matching `X-Renderer-Secret` header |
-| Data folder | `LITEAVATAR_HOME` | `--home` | `~/.cache/livekit-liteavatar` | LiteAvatar code, weights, presenters |
+| Data folder | `LITEAVATAR_HOME` | `--home` | `~/.cache/livekit-lite-avatar` | LiteAvatar code, weights, presenters |
 
 The renderer only needs to reach your LiveKit server; the agent needs to reach the renderer over HTTP. If you bind
 it to anything other than localhost, set `LITEAVATAR_SECRET` (and the same secret on the agent side) and keep it
@@ -264,7 +264,7 @@ November 2026. Check upstream, or get written permission from Alibaba, before us
 commercially. The `sample` presenter ships inside the MIT-licensed GitHub repository, but whether the MIT licence is
 meant to cover it isn't stated either; treat it the same way until upstream says so. This is not legal advice.
 
-`src/livekit_liteavatar/renderer/mouth_pcs.npy` (four 32-value vectors used by `LITEAVATAR_OPEN_GAIN`) was computed
+`src/livekit_lite_avatar/renderer/mouth_pcs.npy` (four 32-value vectors used by `LITEAVATAR_OPEN_GAIN`) was computed
 by this project from audio2mouth's output on test speech; it contains no LiteAvatar weights.
 
 ## Acknowledgements

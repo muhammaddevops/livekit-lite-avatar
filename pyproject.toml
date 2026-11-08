@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "livekit-liteavatar"
+name = "livekit-lite-avatar"
 version = "0.1.0"
 description = "Self-hosted, CPU-only, lip-synced LiteAvatar video avatar for LiveKit Agents"
 readme = "README.md"
@@ -63,10 +63,10 @@ Repository = "https://github.com/muhammaddevops/livekit-lite-avatar"
 Issues = "https://github.com/muhammaddevops/livekit-lite-avatar/issues"
 
 [project.scripts]
-liteavatar-renderer = "livekit_liteavatar.renderer.__main__:main"
+liteavatar-renderer = "livekit_lite_avatar.renderer.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/livekit_liteavatar"]
+packages = ["src/livekit_lite_avatar"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "examples", "tests", "scripts", "README.md", "LICENSE", "constraints-renderer.txt"]

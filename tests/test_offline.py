@@ -16,8 +16,8 @@ import os
 
 import pytest
 
-from livekit_liteavatar.renderer import assets
-from livekit_liteavatar.renderer.settings import Settings
+from livekit_lite_avatar.renderer import assets
+from livekit_lite_avatar.renderer.settings import Settings
 
 SETTINGS = Settings.from_env()
 pytestmark = pytest.mark.skipif(bool(assets.check(SETTINGS)),
@@ -27,20 +27,20 @@ pytestmark = pytest.mark.skipif(bool(assets.check(SETTINGS)),
 @pytest.fixture(scope="module")
 def stream():
     pytest.importorskip("torch", reason="needs the renderer extra")
-    from livekit_liteavatar.renderer.stream import from_settings
+    from livekit_lite_avatar.renderer.stream import from_settings
 
     return from_settings(SETTINGS)
 
 
 @pytest.fixture(scope="module")
 def wav():
-    from livekit_liteavatar.renderer.offline import default_wav
+    from livekit_lite_avatar.renderer.offline import default_wav
 
     return os.getenv("LITEAVATAR_TEST_WAV") or str(default_wav(SETTINGS))
 
 
 def test_offline_render(stream, wav, tmp_path):
-    from livekit_liteavatar.renderer.offline import render_file
+    from livekit_lite_avatar.renderer.offline import render_file
 
     out = tmp_path / "liteavatar-test.mp4"
     result = render_file(wav, out, SETTINGS, stream=stream)
@@ -57,7 +57,7 @@ def test_worker_generator_in_real_time(stream, wav):
     from livekit import rtc
     from livekit.agents.voice.avatar import AudioSegmentEnd
 
-    from livekit_liteavatar.renderer.worker import SAMPLE_RATE, LiteAvatarGenerator
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE, LiteAvatarGenerator
 
     audio, _ = librosa.load(wav, sr=SAMPLE_RATE, mono=True)
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)

@@ -34,7 +34,7 @@ WEIGHTS = [  # (path inside the LiteAvatar checkout, path on ModelScope, size in
      "5b59db5f607fde57bd8d6c8df8f22ce5b37ec7adcdb7b4ee785a4478f06c1c50"),
 ]
 SAMPLE_PRESENTER = "sample"
-_UA = {"User-Agent": "livekit-liteavatar-setup"}
+_UA = {"User-Agent": "livekit-lite-avatar-setup"}
 
 
 def _say(msg: str) -> None:

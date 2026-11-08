@@ -1,6 +1,6 @@
 """Self-hosted, CPU-only LiteAvatar video avatar for LiveKit Agents.
 
-    from livekit_liteavatar import LiteAvatarSession
+    from livekit_lite_avatar import LiteAvatarSession
 
     avatar = LiteAvatarSession(renderer_url="http://127.0.0.1:8791")
     await avatar.start(session, room=ctx.room)

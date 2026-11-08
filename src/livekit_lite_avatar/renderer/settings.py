@@ -19,7 +19,7 @@ _PRESENTER_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 def _default_home() -> Path:
     base = os.getenv("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "livekit-liteavatar"
+    return Path(base) / "livekit-lite-avatar"
 
 
 @dataclass(frozen=True)
@@ -102,7 +102,7 @@ def _cast(name: str, raw: str):
 
 
 _FLAGS = {
-    "home": (Path, "data folder (LITEAVATAR_HOME, default ~/.cache/livekit-liteavatar)"),
+    "home": (Path, "data folder (LITEAVATAR_HOME, default ~/.cache/livekit-lite-avatar)"),
     "presenter": (str, "default presenter id (LITEAVATAR_PRESENTER)"),
     "fps": (int, "video frame rate (LITEAVATAR_FPS, 25)"),
     "width": (int, "video width in pixels (LITEAVATAR_WIDTH, 576)"),

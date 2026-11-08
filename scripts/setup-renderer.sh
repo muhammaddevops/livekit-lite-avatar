@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time renderer setup (CPU only, macOS or Linux): a Python venv with the renderer dependencies, then
 # LiteAvatar's code, weights and one presenter from upstream (~1.3 GB) into $LITEAVATAR_HOME
-# (default ~/.cache/livekit-liteavatar).
+# (default ~/.cache/livekit-lite-avatar).
 #
 #   scripts/setup-renderer.sh [presenter-id]     default P1yerb8kIA7eBpaIydU2lwzA, or "sample"
 #

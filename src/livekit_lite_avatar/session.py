@@ -18,7 +18,7 @@ from livekit.agents import AgentSession, get_job_context
 from livekit.agents.voice.avatar import AvatarSession, DataStreamAudioOutput
 from livekit.agents.voice.room_io import ATTRIBUTE_PUBLISH_ON_BEHALF
 
-logger = logging.getLogger("livekit_liteavatar")
+logger = logging.getLogger("livekit_lite_avatar")
 
 SAMPLE_RATE = 24000  # the renderer works on 24 kHz mono
 DEFAULT_RENDERER_URL = "http://127.0.0.1:8791"

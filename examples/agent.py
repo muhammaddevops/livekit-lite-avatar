@@ -14,7 +14,7 @@ import logging
 
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli, inference
 
-from livekit_liteavatar import LiteAvatarError, LiteAvatarSession
+from livekit_lite_avatar import LiteAvatarError, LiteAvatarSession
 
 logger = logging.getLogger("liteavatar-example")
 

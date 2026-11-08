@@ -7,8 +7,8 @@ import asyncio
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from livekit_liteavatar.renderer.server import create_app
-from livekit_liteavatar.renderer.settings import Settings, add_arguments
+from livekit_lite_avatar.renderer.server import create_app
+from livekit_lite_avatar.renderer.settings import Settings, add_arguments
 
 
 class FakeProc:

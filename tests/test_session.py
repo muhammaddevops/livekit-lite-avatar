@@ -8,7 +8,7 @@ import pytest
 from aiohttp import web
 from livekit import api
 
-from livekit_liteavatar import LiteAvatarError, LiteAvatarSession
+from livekit_lite_avatar import LiteAvatarError, LiteAvatarSession
 
 KEY = "devkey"
 SECRET = "a-test-secret-that-is-at-least-32-characters"
