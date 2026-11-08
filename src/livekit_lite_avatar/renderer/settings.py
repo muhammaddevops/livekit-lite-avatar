@@ -28,7 +28,7 @@ class Settings:
     presenter: str = DEFAULT_PRESENTER  # default presenter (a session may ask for another installed one)
     fps: int = 25  # video frame rate (LiteAvatar's own rate is 30; 25 saves ~10% CPU)
     width: int = 576  # output width in pixels; height follows the presenter's aspect ratio
-    threads: int = 6  # torch threads per worker; leave cores for encoding and the agent
+    threads: int = min(6, os.cpu_count() or 6)  # torch threads per worker; leave cores for encoding and the agent
     lip_delay_frames: int = 1  # video starts this many frames after its audio (LiteAvatar's lips run early)
     bitrate: int = 2_500_000  # single video layer, bits per second
     max_sessions: int = 2  # concurrent sessions (one worker process each)
@@ -106,7 +106,7 @@ _FLAGS = {
     "presenter": (str, "default presenter id (LITEAVATAR_PRESENTER)"),
     "fps": (int, "video frame rate (LITEAVATAR_FPS, 25)"),
     "width": (int, "video width in pixels (LITEAVATAR_WIDTH, 576)"),
-    "threads": (int, "torch threads per worker (LITEAVATAR_THREADS, 6)"),
+    "threads": (int, "torch threads per worker (LITEAVATAR_THREADS, 6 or the number of cores if fewer)"),
     "lip_delay_frames": (int, "frames the video starts after its audio (LITEAVATAR_LIP_DELAY_FRAMES, 1)"),
     "bitrate": (int, "video bitrate in bit/s (LITEAVATAR_BITRATE, 2500000)"),
     "max_sessions": (int, "concurrent sessions (LITEAVATAR_MAX_SESSIONS, 2)"),

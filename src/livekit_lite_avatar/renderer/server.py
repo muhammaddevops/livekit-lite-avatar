@@ -190,10 +190,14 @@ def create_app(settings: Settings, pool: Pool | None = None) -> web.Application:
     return app
 
 
-def serve(settings: Settings) -> None:
+def serve(settings: Settings, *, download: bool = False) -> None:
     from . import assets
 
     missing = assets.check(settings)
+    if missing and download:
+        logger.info("downloading what is missing first: %s", "; ".join(missing))
+        assets.setup(settings, [settings.presenter])
+        missing = assets.check(settings)
     if missing:
         raise SystemExit(
             "renderer is not set up; missing:\n  " + "\n  ".join(missing) + "\nRun: liteavatar-renderer setup"

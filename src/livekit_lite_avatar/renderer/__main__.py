@@ -1,7 +1,7 @@
 """liteavatar-renderer: set up, run and test the LiteAvatar renderer.
 
     liteavatar-renderer setup [--presenter ID ...]    download LiteAvatar code, weights and presenters (~1.3 GB)
-    liteavatar-renderer serve [--port 8791 ...]       run the session server agents call
+    liteavatar-renderer serve [--download] [...]     run the session server agents call
     liteavatar-renderer render IN.wav OUT.mp4         offline test: WAV in, MP4 out, prints the real-time factor
     liteavatar-renderer presenters                    list installed presenters
     liteavatar-renderer worker --url ... --token ...  join one room directly (debugging)
@@ -34,7 +34,7 @@ def _cmd_setup(ns: argparse.Namespace) -> None:
 def _cmd_serve(ns: argparse.Namespace) -> None:
     from .server import serve
 
-    serve(_settings(ns))
+    serve(_settings(ns), download=ns.download)
 
 
 def _cmd_render(ns: argparse.Namespace) -> None:
@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=_cmd_setup)
 
     p = sub.add_parser("serve", help="run the session server")
+    p.add_argument("--download", action="store_true", help="download missing LiteAvatar assets before serving")
     settings_mod.add_arguments(p)
     p.set_defaults(fn=_cmd_serve)
 

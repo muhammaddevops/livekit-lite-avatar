@@ -262,8 +262,9 @@ class LiteAvatarStream:
             return np.zeros((0, 32), np.float32)
         t = perf_counter()
         total, start = self._frames_avail(), self.done
-        # when audio is buffered ahead (TTS usually is), share one feature pass between two windows
-        nwin = 2 if not final and start + HOP + WIN + LOOKAHEAD <= total else 1
+        # when audio is buffered ahead (TTS usually is), share one feature pass between two windows, but not
+        # for a reply's first window: there, time to the first frame matters more than throughput
+        nwin = 2 if start > 0 and not final and start + HOP + WIN + LOOKAHEAD <= total else 1
         c0 = max(0, start - LEFT_CTX)
         c1 = min(total, start + (nwin - 1) * HOP + WIN + LOOKAHEAD)
         feats = self._features(c0, c1)

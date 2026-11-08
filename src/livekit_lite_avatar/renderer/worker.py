@@ -40,6 +40,7 @@ SAMPLE_RATE = 24000  # the agent side sends 24 kHz mono
 _END = object()
 LEAD_FRAMES = 8  # about the time to the first drawn frame of a reply
 DRAW_BATCH = 6  # frames drawn per hand-over
+FIRST_BATCH = 2  # a reply's first hand-over is smaller, so it starts sooner (drawing is ~3x faster than playback)
 
 
 class CrispAvatarRunner(AvatarRunner):
@@ -137,6 +138,36 @@ class ResilientAudioReceiver(AudioReceiver):
             await self._inner.aclose()
 
 
+class _Buffer:
+    """Append-only array with amortised O(1) appends; view() is the filled part, without copying.
+
+    clear() starts a fresh array rather than reusing the old one, so views handed out earlier (audio chunks
+    still queued for playback) are never overwritten."""
+
+    def __init__(self, dtype) -> None:
+        self._dtype = dtype
+        self.clear()
+
+    def clear(self) -> None:
+        self._a = np.zeros(1 << 16, self._dtype)
+        self.n = 0
+
+    def truncate(self, n: int) -> None:
+        self.n = min(self.n, n)
+
+    def extend(self, x: np.ndarray) -> None:
+        need = self.n + len(x)
+        if need > len(self._a):
+            grown = np.zeros(max(need, 2 * len(self._a)), self._dtype)
+            grown[: self.n] = self._a[: self.n]
+            self._a = grown
+        self._a[self.n : need] = x
+        self.n = need
+
+    def view(self) -> np.ndarray:
+        return self._a[: self.n]
+
+
 class Resampler24to16:
     """24 kHz int16 in, 16 kHz float32 out, incrementally; equal to scipy's resample_poly(x, 2, 3) on the whole
     reply so far. resample_poly's filter reaches only ~16 input samples either side, so when audio is appended
@@ -150,19 +181,20 @@ class Resampler24to16:
         self.reset()
 
     def reset(self) -> None:
-        self.x = np.zeros(0, np.float32)
-        self.y = np.zeros(0, np.float32)
+        self.x = _Buffer(np.float32)
+        self.y = _Buffer(np.float32)
 
     def append(self, pcm: np.ndarray) -> np.ndarray:
         from scipy.signal import resample_poly
 
-        old = len(self.x)
-        self.x = np.concatenate([self.x, pcm.astype(np.float32) / 32768.0])
+        old = self.x.n
+        self.x.extend(pcm.astype(np.float32) / 32768.0)
         k = max(0, (old - self.REDO) // 3 * 3)  # first input sample whose outputs are recomputed
         i0 = max(0, k - self.CTX)
-        seg = resample_poly(self.x[i0:], 2, 3).astype(np.float32)
-        self.y = np.concatenate([self.y[: k * 2 // 3], seg[(k - i0) * 2 // 3 :]])
-        return self.y
+        seg = resample_poly(self.x.view()[i0:], 2, 3).astype(np.float32)
+        self.y.truncate(k * 2 // 3)
+        self.y.extend(seg[(k - i0) * 2 // 3 :])
+        return self.y.view()
 
 
 def _mono(frame: rtc.AudioFrame) -> np.ndarray:
@@ -233,13 +265,16 @@ class LiteAvatarGenerator(VideoGenerator):
 
     async def _produce_loop(self) -> None:
         epoch = self._epoch
-        a24 = np.zeros(0, np.int16)  # this segment's audio, as received (24 kHz)
+        buf = _Buffer(np.int16)
+        a24 = buf.view()  # this segment's audio, as received (24 kHz)
         emitted = 0  # video frames already handed out for this segment
         ended = False
+        t_audio = t_first = 0.0  # when this reply's first audio arrived, and its first drawn frame was ready
 
         def reset() -> None:
-            nonlocal a24, emitted, ended
-            a24, emitted, ended = np.zeros(0, np.int16), 0, False
+            nonlocal a24, emitted, ended, t_audio, t_first
+            buf.clear()
+            a24, emitted, ended, t_audio, t_first = buf.view(), 0, False, 0.0, 0.0
             self._s.reset()
             self._rs.reset()
 
@@ -269,7 +304,10 @@ class LiteAvatarGenerator(VideoGenerator):
                         break
                     parts.append(self._pcm(item))
                 new_pcm = np.concatenate(parts)
-                a24 = np.concatenate([a24, new_pcm])
+                if not len(a24):
+                    t_audio = time.perf_counter()
+                buf.extend(new_pcm)
+                a24 = buf.view()
                 self._s.audio = self._rs.append(new_pcm)  # 24 kHz -> 16 kHz for the models
                 continue
             if self._s.done == 0:  # first window: continue the idle motion from where it will be shown
@@ -280,13 +318,18 @@ class LiteAvatarGenerator(VideoGenerator):
                     await self._out.put((epoch, None, self._chunk(a24, emitted)))
                     emitted += 1
             # draw a few frames at a time and hand each batch over at once, so playback starts early
-            for b0 in range(0, len(rows), DRAW_BATCH):
+            bounds = list(range(0, len(rows), DRAW_BATCH))
+            if not t_first and len(rows) > FIRST_BATCH:
+                bounds = [0, *range(FIRST_BATCH, len(rows), DRAW_BATCH)]
+            for b0, b1 in zip(bounds, [*bounds[1:], len(rows)], strict=True):
                 if epoch != self._epoch:
                     break
                 k0 = self._s.k_next
-                frames = await asyncio.to_thread(self._s.draw, rows[b0 : b0 + DRAW_BATCH])
+                frames = await asyncio.to_thread(self._s.draw, rows[b0:b1])
                 if epoch != self._epoch:
                     break
+                if frames and not t_first:
+                    t_first = time.perf_counter()
                 for j, (f, energy) in enumerate(frames):
                     await self._out.put((epoch, (k0 + j, f, energy), self._chunk(a24, emitted)))
                     emitted += 1
@@ -298,11 +341,12 @@ class LiteAvatarGenerator(VideoGenerator):
                     await self._out.put((epoch, None, self._chunk(a24, emitted)))
                     emitted += 1
                 await self._out.put((epoch, _END, None))
+                audio_s = len(a24) / SAMPLE_RATE
                 logger.info(
-                    "reply: %.1fs audio, %d windows, %.2fs compute",
-                    len(a24) / SAMPLE_RATE,
-                    self._s.stats["windows"],
-                    self._s.stats["compute_s"],
+                    "reply: %.1fs audio, first frame %.2fs after its audio arrived, real-time factor %.2f",
+                    audio_s,
+                    (t_first - t_audio) if t_first else -1.0,
+                    self._s.stats["compute_s"] / audio_s if audio_s else 0.0,
                 )
                 reset()
 
