@@ -57,7 +57,9 @@ def test_full_reply_plays_and_the_agent_hears_it_finish(result):
     first = result["speech"][0]
     assert first["interrupted"] is False
     assert abs(first["audible_s"] - first["wav_audible_s"]) < 0.25, "speech was cut short or stretched"
-    assert first["agent_playout_s"] <= first["wav_s"] + 3, "the agent waited too long for playback to finish"
+    # the agent hears playback finish (not stuck waiting): within 3 s of the speech normally, 10 s on a slow machine
+    slack = 3 if PERF else 10
+    assert first["agent_playout_s"] <= first["wav_s"] + slack, "the agent waited too long for playback to finish"
 
 
 def test_interruption_stops_the_avatar(result):

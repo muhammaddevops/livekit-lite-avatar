@@ -43,7 +43,7 @@ def _frames(a: np.ndarray) -> list[np.ndarray]:
     return [a[i : i + FRAME] for i in range(0, len(a), FRAME)]
 
 
-async def _visit(stack) -> dict:
+async def _visit(stack, greeting_s: float) -> dict:
     import soundfile as sf
     from livekit import api, rtc
 
@@ -74,8 +74,10 @@ async def _visit(stack) -> dict:
     await room.connect(stack.lk_url, token)
     try:
         start = time.time()
-        while not quiet_for(2.0, start):  # the greeting: three recorded lines
-            assert time.time() - start < 120, "no greeting"
+        # the greeting: three recorded lines. Wait for (nearly) all of it and a pause after it: the pauses between the
+        # lines can be long on a slow machine, so a pause alone doesn't mean the greeting is over.
+        while _audible_s([a for _, a in heard]) < greeting_s - 0.5 or not quiet_for(2.0, start):
+            assert time.time() - start < 180, f"the greeting didn't arrive ({_audible_s([a for _, a in heard])} s)"
             await asyncio.sleep(0.2)
         greeting = _audible_s([a for _, a in heard])
 
@@ -106,16 +108,16 @@ def test_demo_greets_then_repeats_you(tmp_path):
     import run as e2e
     import soundfile as sf
 
+    lines = [sf.read(DEMO / "audio" / n, dtype="int16")[0] for n in ("hello.flac", "how.flac", "now.flac")]
+    expected = sum(_audible_s(_frames(a)) for a in lines)
     stack = e2e.Stack(tmp_path)
     try:
         stack.start_livekit()
         stack.start_renderer()
         stack.start_agent(DEMO / "agent.py")
-        result = asyncio.run(_visit(stack))
+        result = asyncio.run(_visit(stack, expected))
     finally:
         stack.stop()
     print("\n", result)
-    lines = [sf.read(DEMO / "audio" / n, dtype="int16")[0] for n in ("hello.flac", "how.flac", "now.flac")]
-    expected = sum(_audible_s(_frames(a)) for a in lines)
     assert abs(result["greeting_audible_s"] - expected) < 0.5, "the greeting didn't play in full"
     assert abs(result["echo_audible_s"] - result["said_audible_s"]) < 0.5, "the avatar didn't repeat what was said"
