@@ -42,7 +42,14 @@ MIN_SPEECH_MS = 300
 MAX_UTTERANCE_S = 15.0
 PRE_ROLL_MS = 200  # keep a little audio from before speech started, so first syllables aren't clipped
 
-server = AgentServer()
+
+def own_jobs_load(server: AgentServer) -> float:
+    """This worker's load as its share of calls, not the machine's CPU. The renderer keeps the CPU busy when it runs on
+    the same machine, and LiveKit's default (CPU above 70%) would then stop this worker from taking calls."""
+    return min(1.0, len(server.active_jobs) / 4)
+
+
+server = AgentServer(load_fnc=own_jobs_load)
 
 
 async def frames(audio: np.ndarray, sr: int = RATE):

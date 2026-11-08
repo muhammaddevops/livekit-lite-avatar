@@ -240,6 +240,10 @@ to reach the renderer over HTTP. They can share a machine or not. A worker is a 
 keeps up to 6 cores busy while the avatar talks. Two sessions at once is the default limit and what an M4 Pro was
 sized for; scale out with more machines, each with its own renderer.
 
+**Same machine as the agent.** LiveKit's agent workers stop taking calls when the machine's CPU passes 70%, and a
+renderer that is drawing keeps it busy. If they share a machine, give your `AgentServer` a `load_fnc` that counts its
+own calls instead, as [`examples/agent.py`](examples/agent.py) does.
+
 **Security.** The renderer binds to localhost by default. If you expose it, set `LITEAVATAR_SECRET` (and the same
 secret on the agent side), and keep it behind a firewall: the secret is its only authentication.
 
