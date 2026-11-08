@@ -28,6 +28,8 @@ def _cmd_setup(ns: argparse.Namespace) -> None:
 
     s = _settings(ns)
     presenters = ns.presenters or [s.presenter]
+    if not ns.skip_code and "sample" not in presenters:
+        presenters.append("sample")  # comes with LiteAvatar's code: no extra download
     assets.setup(s, presenters, gallery=ns.gallery, verify=not ns.no_verify, skip_code=ns.skip_code)
 
 

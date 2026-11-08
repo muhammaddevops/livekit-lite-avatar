@@ -63,15 +63,18 @@ jobs:
           key: liteavatar-assets-v1-${{ runner.os }}-${{ hashFiles('src/livekit_lite_avatar/renderer/assets.py') }}
       - name: Install livekit-server (and ffmpeg on Linux)
         run: |
-          for attempt in 1 2 3; do  # GitHub's release downloads fail now and then
-            if [ "$RUNNER_OS" = "Linux" ]; then
-              curl -sSL https://get.livekit.io | bash && break
-            else
-              brew install livekit && break
-            fi
-            echo "install failed, retrying in 15 s"; sleep 15
-          done
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -q && sudo apt-get install -y -q ffmpeg; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # the binary from LiveKit's official image on Docker Hub (sturdier than GitHub release downloads)
+            image=livekit/livekit-server:v1.13.11
+            docker pull -q "$image"
+            entry=$(docker inspect --format '{{index .Config.Entrypoint 0}}' "$image")
+            docker create --name lk "$image" >/dev/null
+            sudo docker cp "lk:$entry" /usr/local/bin/livekit-server
+            docker rm lk >/dev/null
+            sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+          else
+            brew install livekit
+          fi
           livekit-server --version
       - name: Set up the renderer (venv, pinned dependencies, LiteAvatar assets)
         run: scripts/setup-renderer.sh
