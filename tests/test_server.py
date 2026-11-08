@@ -21,6 +21,7 @@ class FakePool:
         self.active: set = set()
         self.loading = 0
         self.jobs: list[dict] = []
+        self.estimate = {"real_time_factor": 0.46, "suggested_fps": 30}
 
     def top_up(self, delay: float = 0.0) -> None:
         pass
@@ -72,6 +73,7 @@ def test_sessions(tmp_path):
     assert statuses == [403, 403, 400, 400, 400, 400, 201, 503]
     assert pool.jobs == [{"url": "wss://x", "token": "t", "presenter": "P1"}]
     assert health["active"] == 1 and health["max"] == 1 and health["presenters"] == ["P1"]
+    assert health["estimate"]["real_time_factor"] == 0.46
 
 
 def test_settings_env_flags_and_worker_env(tmp_path):

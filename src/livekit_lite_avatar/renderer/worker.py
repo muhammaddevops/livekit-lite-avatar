@@ -34,7 +34,7 @@ from livekit.agents.voice.avatar import (
 from livekit.agents.voice.avatar._datastream_io import AUDIO_STREAM_TOPIC
 
 from .settings import Settings
-from .stream import LiteAvatarStream, from_settings
+from .stream import LiteAvatarStream, estimate, from_settings
 
 logger = logging.getLogger("liteavatar.worker")
 SAMPLE_RATE = 24000  # the agent side sends 24 kHz mono
@@ -486,26 +486,40 @@ async def run_session(url: str, token: str, stream: LiteAvatarStream, settings: 
         logger.info("left %s", room.name)
 
 
-def load(settings: Settings) -> LiteAvatarStream:
+def load(settings: Settings) -> tuple[LiteAvatarStream, dict]:
     t = time.perf_counter()
     s = from_settings(settings)
+    load_s = time.perf_counter() - t
+    est = estimate(s)
     logger.info(
-        "models loaded in %.1fs (%dx%d @ %d fps, presenter %s)",
-        time.perf_counter() - t,
+        "models loaded in %.1fs (%dx%d @ %d fps, presenter %s); estimated real-time factor %.2f",
+        load_s,
         s.width,
         s.height,
         s.out_fps,
         settings.presenter,
+        est["real_time_factor"],
     )
-    return s
+    if est["real_time_factor"] > 0.85:
+        hint = f"try --fps {est['suggested_fps']}" if est["suggested_fps"] else "this CPU is too slow for live use"
+        logger.warning(
+            "this machine draws at an estimated real-time factor of %.2f at %d fps, so replies will skip frames "
+            "(%.0f ms per frame, %d ms of speech features per second of speech): %s",
+            est["real_time_factor"],
+            s.out_fps,
+            est["ms_per_frame"],
+            est["speech_features_ms_per_s"],
+            hint,
+        )
+    return s, est
 
 
 def main(
     settings: Settings, *, warm: bool, url: str | None = None, token: str | None = None, presenter: str | None = None
 ) -> None:
-    stream = load(settings)
+    stream, est = load(settings)
     if warm:
-        print("READY", flush=True)
+        print("READY " + json.dumps(est), flush=True)  # the server reads this line
         sys.stdout = sys.stderr  # nobody reads our stdout after READY
         line = sys.stdin.readline()
         if not line.strip():  # the server went away before handing us a session

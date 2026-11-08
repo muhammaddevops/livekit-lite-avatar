@@ -1,0 +1,27 @@
+name: Benchmark result
+description: Share how the renderer runs on your CPU, so the README can list more machines.
+title: "Benchmark: <CPU>"
+labels: [benchmark]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `.venv/bin/python scripts/benchmark.py` (it needs `livekit-server` on PATH for the live part, or add
+        `--no-live`) and paste the table it prints.
+  - type: textarea
+    id: table
+    attributes:
+      label: Benchmark table
+      render: markdown
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: Laptop, desktop or cloud instance type (for example "AWS c7i.2xlarge").
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Other load on the machine, settings you changed (LITEAVATAR_*), how it looked in a live call.

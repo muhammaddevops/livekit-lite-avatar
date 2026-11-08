@@ -344,6 +344,40 @@ class LiteAvatarStream:
         return smooth.astype(np.float32)
 
 
+def estimate(stream: LiteAvatarStream) -> dict:
+    """Time one speech window and a few frames on this machine, and estimate the real-time factor at the stream's
+    frame rate (render time / speech length; live calls want ~0.5 to leave room for encoding and the agent).
+    Takes a second or two; the stream is reset afterwards."""
+    rng = np.random.default_rng(0)
+    noise = (rng.standard_normal(int(2.5 * SR)) * 0.05).astype(np.float32)  # speech-like level, content irrelevant
+    k_next = stream.k_next
+
+    def one_window() -> tuple[float, float]:
+        stream.reset()
+        stream.feed(noise)
+        t = perf_counter()
+        rows = stream.plan(False)
+        t_plan = perf_counter() - t
+        t = perf_counter()
+        stream.draw(rows[:6])
+        return t_plan, (perf_counter() - t) / len(rows[:6])
+
+    one_window()  # warm-up: first calls allocate and pick kernels
+    t_plan, t_frame = one_window()
+    stream.reset()
+    stream.k_next = k_next
+    plan_per_s = t_plan / (HOP / FPS)  # one window commits 0.8 s of speech
+    rtf = plan_per_s + t_frame * stream.out_fps
+    # the highest common frame rate that keeps the estimate at or under 0.85
+    fits = [f for f in (30, 25, 20, 15, 12, 10) if plan_per_s + t_frame * f <= 0.85]
+    return {
+        "real_time_factor": round(rtf, 2),
+        "speech_features_ms_per_s": round(plan_per_s * 1000),
+        "ms_per_frame": round(t_frame * 1000, 1),
+        "suggested_fps": fits[0] if fits else None,
+    }
+
+
 def from_settings(settings, presenter: str | None = None) -> LiteAvatarStream:
     """A LiteAvatarStream configured from renderer Settings."""
     return LiteAvatarStream(

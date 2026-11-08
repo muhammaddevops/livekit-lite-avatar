@@ -1,0 +1,26 @@
+name: Bug report
+description: Something doesn't work as the README says.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How to reproduce
+      description: Commands, settings (LITEAVATAR_*), and the agent code around LiteAvatarSession if relevant.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The renderer's output (`liteavatar-renderer serve`) and the agent's, around the problem.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS and CPU, Python version, livekit-agents version, LiveKit Cloud or self-hosted server.

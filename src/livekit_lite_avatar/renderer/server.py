@@ -6,7 +6,8 @@ POST /sessions  {"url": "wss://...", "token": "<LiveKit token for the avatar par
     -> 201 {"ok": true} once a preloaded worker has the job (loading the models takes seconds to a minute, so it is done
        before anyone asks); 503 when max_sessions are already running or no worker is ready in time;
        400 for a bad body or a presenter that isn't installed; 403 for a wrong secret.
-GET  /health    -> {"ready": n, "loading": n, "active": n, "max": n, "presenters": [...]}
+GET  /health    -> {"ready": n, "loading": n, "active": n, "max": n, "presenters": [...],
+                    "estimate": {"real_time_factor": 0.46, "suggested_fps": 30, ...}}
 
 Binds to 127.0.0.1 by default. Set LITEAVATAR_SECRET to require a matching X-Renderer-Secret header.
 """
@@ -36,6 +37,7 @@ class Pool:
         self.active: set[asyncio.subprocess.Process] = set()
         self.loading = 0
         self.procs: set[asyncio.subprocess.Process] = set()  # every worker started and not yet finished
+        self.estimate: dict = {}  # the last worker's estimate of this machine's speed (see stream.estimate)
         self._tasks: set[asyncio.Task] = set()
         self._hurry = asyncio.Event()  # set when a session is waiting: skip the refill delay
 
@@ -63,7 +65,9 @@ class Pool:
                     logger.error("worker exited while loading (code %s)", await proc.wait())
                     self.procs.discard(proc)
                     return
-                if line.strip() == b"READY":
+                if line.startswith(b"READY"):
+                    with contextlib.suppress(ValueError):
+                        self.estimate = json.loads(line[5:].strip() or b"{}")
                     break
             await self.warm.put(proc)
             logger.info("worker %d ready", proc.pid)
@@ -168,6 +172,7 @@ def create_app(settings: Settings, pool: Pool | None = None) -> web.Application:
         pool_: Pool = request.app[POOL]
         return web.json_response(
             {
+                "estimate": pool_.estimate,
                 "ready": pool_.warm.qsize(),
                 "loading": pool_.loading,
                 "active": len(pool_.active),
