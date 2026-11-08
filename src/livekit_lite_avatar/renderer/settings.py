@@ -26,23 +26,23 @@ def _default_home() -> Path:
 class Settings:
     home: Path = _default_home()  # noqa: RUF009  (resolved once, at import)  LiteAvatar code, weights, presenters
     presenter: str = DEFAULT_PRESENTER  # default presenter (a session may ask for another installed one)
-    fps: int = 25                       # video frame rate (LiteAvatar's own rate is 30; 25 saves ~10% CPU)
-    width: int = 576                    # output width in pixels; height follows the presenter's aspect ratio
-    threads: int = 6                    # torch threads per worker; leave cores for encoding and the agent
-    lip_delay_frames: int = 1           # video starts this many frames after its audio (LiteAvatar's lips run early)
-    bitrate: int = 2_500_000            # single video layer, bits per second
-    max_sessions: int = 2               # concurrent sessions (one worker process each)
-    warm_workers: int = 1               # preloaded workers kept ready for the next session
+    fps: int = 25  # video frame rate (LiteAvatar's own rate is 30; 25 saves ~10% CPU)
+    width: int = 576  # output width in pixels; height follows the presenter's aspect ratio
+    threads: int = 6  # torch threads per worker; leave cores for encoding and the agent
+    lip_delay_frames: int = 1  # video starts this many frames after its audio (LiteAvatar's lips run early)
+    bitrate: int = 2_500_000  # single video layer, bits per second
+    max_sessions: int = 2  # concurrent sessions (one worker process each)
+    warm_workers: int = 1  # preloaded workers kept ready for the next session
     host: str = "127.0.0.1"
     port: int = 8791
-    secret: str = ""                    # if set, POST /sessions needs a matching X-Renderer-Secret header
-    refill_delay_s: float = 60.0        # wait before preloading the next worker, so loading doesn't slow a new call
-    max_session_s: float = 1800.0       # a worker leaves its room after this long
+    secret: str = ""  # if set, POST /sessions needs a matching X-Renderer-Secret header
+    refill_delay_s: float = 60.0  # wait before preloading the next worker, so loading doesn't slow a new call
+    max_session_s: float = 1800.0  # a worker leaves its room after this long
     # look (all off by default; see the README's "Tuning")
-    mouth_gain: float = 1.0             # scales every mouth parameter; artefacts from ~1.3
-    open_gain: float = 1.0              # scales only the jaw-opening direction; 1.8 opens the mouth wider cleanly
-    smooth_hz: float = 10.0             # low-pass on the mouth parameters (LiteAvatar's own value)
-    head_motion: float = 0.0            # gentle sway and nods by moving the whole frame; softens the picture
+    mouth_gain: float = 1.0  # scales every mouth parameter; artefacts from ~1.3
+    open_gain: float = 1.0  # scales only the jaw-opening direction; 1.8 opens the mouth wider cleanly
+    smooth_hz: float = 10.0  # low-pass on the mouth parameters (LiteAvatar's own value)
+    head_motion: float = 0.0  # gentle sway and nods by moving the whole frame; softens the picture
 
     # ---------- paths
     @property

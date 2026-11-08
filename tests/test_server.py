@@ -56,14 +56,14 @@ def test_sessions(tmp_path):
     async def fn(client):
         h = {"X-Renderer-Secret": "s3"}
         r = [
-            (await client.post("/sessions", json=ok)).status,                                         # no secret
-            (await client.post("/sessions", json=ok, headers={"X-Renderer-Secret": "no"})).status,     # wrong
+            (await client.post("/sessions", json=ok)).status,  # no secret
+            (await client.post("/sessions", json=ok, headers={"X-Renderer-Secret": "no"})).status,  # wrong
             (await client.post("/sessions", data=b"not json", headers=h)).status,
-            (await client.post("/sessions", json={"url": "wss://x"}, headers=h)).status,                # no token
+            (await client.post("/sessions", json={"url": "wss://x"}, headers=h)).status,  # no token
             (await client.post("/sessions", json={**ok, "presenter": "../etc"}, headers=h)).status,
-            (await client.post("/sessions", json={**ok, "presenter": "P2"}, headers=h)).status,         # missing
+            (await client.post("/sessions", json={**ok, "presenter": "P2"}, headers=h)).status,  # missing
             (await client.post("/sessions", json={**ok, "presenter": "P1"}, headers=h)).status,
-            (await client.post("/sessions", json=ok, headers=h)).status,                                # full
+            (await client.post("/sessions", json=ok, headers=h)).status,  # full
         ]
         health = await (await client.get("/health")).json()
         return r, health
@@ -75,8 +75,13 @@ def test_sessions(tmp_path):
 
 
 def test_settings_env_flags_and_worker_env(tmp_path):
-    env = {"LITEAVATAR_FPS": "30", "LITEAVATAR_THREADS": "4", "LITEAVATAR_HOME": str(tmp_path),
-           "LITEAVATAR_SECRET": "s3", "LITEAVATAR_OPEN_GAIN": "1.8"}
+    env = {
+        "LITEAVATAR_FPS": "30",
+        "LITEAVATAR_THREADS": "4",
+        "LITEAVATAR_HOME": str(tmp_path),
+        "LITEAVATAR_SECRET": "s3",
+        "LITEAVATAR_OPEN_GAIN": "1.8",
+    }
     s = Settings.from_env(env)
     assert (s.fps, s.threads, s.home, s.open_gain, s.secret) == (30, 4, tmp_path, 1.8, "s3")
     assert (s.lip_delay_frames, s.bitrate, s.width) == (1, 2_500_000, 576)  # learned defaults

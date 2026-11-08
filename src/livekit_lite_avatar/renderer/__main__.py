@@ -71,9 +71,12 @@ def main(argv: list[str] | None = None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("setup", help="download LiteAvatar code, weights and presenters")
-    p.add_argument("--presenter", dest="presenters", action="append",
-                   help="presenter id from LiteAvatarGallery, or 'sample'; repeat for more (default: the default "
-                        "presenter)")
+    p.add_argument(
+        "--presenter",
+        dest="presenters",
+        action="append",
+        help="presenter id from LiteAvatarGallery, or 'sample'; repeat for more (default: the default presenter)",
+    )
     p.add_argument("--gallery", default=DEFAULT_GALLERY, help=f"LiteAvatarGallery folder (default {DEFAULT_GALLERY})")
     p.add_argument("--no-verify", action="store_true", help="accept weight files whose SHA-256 differs")
     p.add_argument("--skip-code", action="store_true", help="only fetch presenters")
@@ -87,8 +90,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("render", help="offline test: render a WAV to an MP4 and print the real-time factor")
     p.add_argument("wav", nargs="?", help="speech WAV (default: a Mandarin sample from the LiteAvatar checkout)")
     p.add_argument("out", nargs="?", default="liteavatar-test.mp4", help="output MP4 (default liteavatar-test.mp4)")
-    settings_mod.add_arguments(p, ["home", "presenter", "fps", "width", "threads", "mouth_gain", "open_gain",
-                                   "smooth_hz", "head_motion"])
+    settings_mod.add_arguments(
+        p, ["home", "presenter", "fps", "width", "threads", "mouth_gain", "open_gain", "smooth_hz", "head_motion"]
+    )
     p.set_defaults(fn=_cmd_render)
 
     p = sub.add_parser("presenters", help="list installed presenters")

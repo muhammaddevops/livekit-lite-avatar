@@ -33,7 +33,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     avatar = LiteAvatarSession(
         renderer_url="http://127.0.0.1:8791",  # or LITEAVATAR_RENDERER_URL
-        presenter=None,                        # None = the renderer's default presenter
+        presenter=None,  # None = the renderer's default presenter
         avatar_participant_name="Assistant",
     )
     try:

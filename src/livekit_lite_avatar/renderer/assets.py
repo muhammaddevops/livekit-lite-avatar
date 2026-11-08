@@ -26,12 +26,24 @@ LITEAVATAR_COMMIT = "5b7ec850945e03d56fb290b05fb68440c359fa86"  # tested; the st
 MODELSCOPE = "https://modelscope.cn/models/HumanAIGC-Engineering/LiteAvatarGallery/resolve/master"
 PARAFORMER = "weights/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 WEIGHTS = [  # (path inside the LiteAvatar checkout, path on ModelScope, size in bytes, sha256)
-    ("weights/model_1.onnx", "lite_avatar_weights/model_1.onnx", 184_415_825,
-     "312f0213a23a1c17ecb66f9edf8413b8ef193c0d4d2f5f9dd6714a178492c34c"),
-    (f"{PARAFORMER}/model.pb", "lite_avatar_weights/model.pb", 880_502_012,
-     "5bba782a5e9196166233b9ab12ba04cadff9ef9212b4ff6153ed9290ff679025"),
-    (f"{PARAFORMER}/lm/lm.pb", "lite_avatar_weights/lm.pb", 237_373_385,
-     "5b59db5f607fde57bd8d6c8df8f22ce5b37ec7adcdb7b4ee785a4478f06c1c50"),
+    (
+        "weights/model_1.onnx",
+        "lite_avatar_weights/model_1.onnx",
+        184_415_825,
+        "312f0213a23a1c17ecb66f9edf8413b8ef193c0d4d2f5f9dd6714a178492c34c",
+    ),
+    (
+        f"{PARAFORMER}/model.pb",
+        "lite_avatar_weights/model.pb",
+        880_502_012,
+        "5bba782a5e9196166233b9ab12ba04cadff9ef9212b4ff6153ed9290ff679025",
+    ),
+    (
+        f"{PARAFORMER}/lm/lm.pb",
+        "lite_avatar_weights/lm.pb",
+        237_373_385,
+        "5b59db5f607fde57bd8d6c8df8f22ce5b37ec7adcdb7b4ee785a4478f06c1c50",
+    ),
 ]
 SAMPLE_PRESENTER = "sample"
 _UA = {"User-Agent": "livekit-lite-avatar-setup"}
@@ -105,8 +117,10 @@ def fetch_weights(settings: Settings, verify: bool = True) -> None:
             got = _sha256(dest)
             if got != sha:
                 dest.unlink()
-                raise SystemExit(f"{rel}: SHA-256 {got} does not match the tested file ({sha}). Upstream may have "
-                                 "changed it; rerun with --no-verify to accept the new file at your own risk.")
+                raise SystemExit(
+                    f"{rel}: SHA-256 {got} does not match the tested file ({sha}). Upstream may have "
+                    "changed it; rerun with --no-verify to accept the new file at your own risk."
+                )
 
 
 def _safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
@@ -152,8 +166,13 @@ def fetch_presenter(settings: Settings, presenter: str, gallery: str = DEFAULT_G
     return dest
 
 
-def setup(settings: Settings, presenters: list[str], gallery: str = DEFAULT_GALLERY, verify: bool = True,
-          skip_code: bool = False) -> None:
+def setup(
+    settings: Settings,
+    presenters: list[str],
+    gallery: str = DEFAULT_GALLERY,
+    verify: bool = True,
+    skip_code: bool = False,
+) -> None:
     if not skip_code:
         fetch_code(settings)
         fetch_weights(settings, verify=verify)

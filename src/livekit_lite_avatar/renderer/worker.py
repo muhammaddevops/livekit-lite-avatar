@@ -38,8 +38,8 @@ from .stream import LiteAvatarStream, from_settings
 logger = logging.getLogger("liteavatar.worker")
 SAMPLE_RATE = 24000  # the agent side sends 24 kHz mono
 _END = object()
-LEAD_FRAMES = 8      # about the time to the first drawn frame of a reply
-DRAW_BATCH = 6       # frames drawn per hand-over
+LEAD_FRAMES = 8  # about the time to the first drawn frame of a reply
+DRAW_BATCH = 6  # frames drawn per hand-over
 
 
 class CrispAvatarRunner(AvatarRunner):
@@ -60,7 +60,8 @@ class CrispAvatarRunner(AvatarRunner):
             await self._room_connected_fut
             audio_track = rtc.LocalAudioTrack.create_audio_track("avatar_audio", self._audio_source)
             self._audio_publication = await self._room.local_participant.publish_track(
-                audio_track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))
+                audio_track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+            )
             await self._audio_publication.wait_for_subscription()
             video_track = rtc.LocalVideoTrack.create_video_track("avatar_video", self._video_source)
             opts = rtc.TrackPublishOptions(
@@ -136,6 +137,34 @@ class ResilientAudioReceiver(AudioReceiver):
             await self._inner.aclose()
 
 
+class Resampler24to16:
+    """24 kHz int16 in, 16 kHz float32 out, incrementally; equal to scipy's resample_poly(x, 2, 3) on the whole
+    reply so far. resample_poly's filter reaches only ~16 input samples either side, so when audio is appended
+    only the last few outputs change: recompute from just before the old end (with some context) rather than
+    resampling the whole reply again for every chunk, which grew quadratically on long replies."""
+
+    CTX = 300  # input samples of context before the recomputed part (a multiple of 3)
+    REDO = 120  # input samples before the old end whose outputs are recomputed (a multiple of 3)
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.x = np.zeros(0, np.float32)
+        self.y = np.zeros(0, np.float32)
+
+    def append(self, pcm: np.ndarray) -> np.ndarray:
+        from scipy.signal import resample_poly
+
+        old = len(self.x)
+        self.x = np.concatenate([self.x, pcm.astype(np.float32) / 32768.0])
+        k = max(0, (old - self.REDO) // 3 * 3)  # first input sample whose outputs are recomputed
+        i0 = max(0, k - self.CTX)
+        seg = resample_poly(self.x[i0:], 2, 3).astype(np.float32)
+        self.y = np.concatenate([self.y[: k * 2 // 3], seg[(k - i0) * 2 // 3 :]])
+        return self.y
+
+
 def _mono(frame: rtc.AudioFrame) -> np.ndarray:
     pcm = np.frombuffer(frame.data, np.int16)
     if frame.num_channels > 1:
@@ -158,18 +187,20 @@ class LiteAvatarGenerator(VideoGenerator):
         self._producer: asyncio.Task | None = None
         self._k = 0  # idle-video frame index of the next frame shown
         self._warned_rate = False
+        self._rs = Resampler24to16()
         self.av_sync: rtc.AVSynchronizer | None = None
 
     async def push_audio(self, frame: rtc.AudioFrame | AudioSegmentEnd) -> None:
         await self._in.put((self._epoch, frame))
 
-    def clear_buffer(self) -> None:
+    async def clear_buffer(self) -> None:
+        """Drop the current reply at once (an interruption); AvatarRunner awaits this."""
         self._epoch += 1
         for q in (self._in, self._out):
             while not q.empty():
                 q.get_nowait()
         if self.av_sync is not None:
-            asyncio.ensure_future(self.av_sync.clear_queue())
+            await self.av_sync.clear_queue()
 
     def _vf(self, bgr: np.ndarray) -> rtc.VideoFrame:
         bgra = cv2.cvtColor(bgr, cv2.COLOR_BGR2BGRA)
@@ -184,7 +215,7 @@ class LiteAvatarGenerator(VideoGenerator):
     def _chunk(self, a24: np.ndarray, i: int) -> np.ndarray:
         """Audio for video frame i of the segment, zero-padded at the end."""
         spf = self._spf
-        chunk = a24[i * spf:(i + 1) * spf]
+        chunk = a24[i * spf : (i + 1) * spf]
         if len(chunk) < spf:
             chunk = np.concatenate([chunk, np.zeros(spf - len(chunk), np.int16)])
         return chunk
@@ -197,21 +228,20 @@ class LiteAvatarGenerator(VideoGenerator):
                 raise
             except Exception:
                 logger.exception("renderer error; resetting")
-                self.clear_buffer()
+                await self.clear_buffer()
                 await asyncio.sleep(0.2)
 
     async def _produce_loop(self) -> None:
-        from scipy.signal import resample_poly
-
         epoch = self._epoch
         a24 = np.zeros(0, np.int16)  # this segment's audio, as received (24 kHz)
-        emitted = 0                   # video frames already handed out for this segment
+        emitted = 0  # video frames already handed out for this segment
         ended = False
 
         def reset() -> None:
             nonlocal a24, emitted, ended
             a24, emitted, ended = np.zeros(0, np.int16), 0, False
             self._s.reset()
+            self._rs.reset()
 
         while True:
             if epoch != self._epoch:
@@ -238,9 +268,9 @@ class LiteAvatarGenerator(VideoGenerator):
                         ended = True
                         break
                     parts.append(self._pcm(item))
-                a24 = np.concatenate([a24, *parts])
-                x = a24.astype(np.float32) / 32768.0
-                self._s.audio = resample_poly(x, 2, 3).astype(np.float32)  # 24 kHz -> 16 kHz for the models
+                new_pcm = np.concatenate(parts)
+                a24 = np.concatenate([a24, new_pcm])
+                self._s.audio = self._rs.append(new_pcm)  # 24 kHz -> 16 kHz for the models
                 continue
             if self._s.done == 0:  # first window: continue the idle motion from where it will be shown
                 self._s.k_next = self._k + LEAD_FRAMES
@@ -254,7 +284,7 @@ class LiteAvatarGenerator(VideoGenerator):
                 if epoch != self._epoch:
                     break
                 k0 = self._s.k_next
-                frames = await asyncio.to_thread(self._s.draw, rows[b0:b0 + DRAW_BATCH])
+                frames = await asyncio.to_thread(self._s.draw, rows[b0 : b0 + DRAW_BATCH])
                 if epoch != self._epoch:
                     break
                 for j, (f, energy) in enumerate(frames):
@@ -268,8 +298,12 @@ class LiteAvatarGenerator(VideoGenerator):
                     await self._out.put((epoch, None, self._chunk(a24, emitted)))
                     emitted += 1
                 await self._out.put((epoch, _END, None))
-                logger.info("reply: %.1fs audio, %d windows, %.2fs compute", len(a24) / SAMPLE_RATE,
-                            self._s.stats["windows"], self._s.stats["compute_s"])
+                logger.info(
+                    "reply: %.1fs audio, %d windows, %.2fs compute",
+                    len(a24) / SAMPLE_RATE,
+                    self._s.stats["windows"],
+                    self._s.stats["compute_s"],
+                )
                 reset()
 
     def __aiter__(self):
@@ -297,7 +331,8 @@ class LiteAvatarGenerator(VideoGenerator):
                 img = self._s.move(frame[1], frame[0], frame[2])
                 self._k = frame[0] + 1
             yield self._vf(img)
-            yield rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, self._spf)
+            if ep == self._epoch:  # an interruption may have cleared the reply while the frame was shown
+                yield rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, self._spf)
 
     async def aclose(self) -> None:
         if self._producer is not None:
@@ -322,8 +357,13 @@ async def run_session(url: str, token: str, stream: LiteAvatarStream, settings: 
         room,
         audio_recv=ResilientAudioReceiver(room, sender_identity=owner),
         video_gen=gen,
-        options=AvatarOptions(video_width=stream.width, video_height=stream.height, video_fps=stream.out_fps,
-                              audio_sample_rate=SAMPLE_RATE, audio_channels=1),
+        options=AvatarOptions(
+            video_width=stream.width,
+            video_height=stream.height,
+            video_fps=stream.out_fps,
+            audio_sample_rate=SAMPLE_RATE,
+            audio_channels=1,
+        ),
         bitrate=settings.bitrate,
         fps=stream.out_fps,
     )
@@ -343,13 +383,20 @@ async def run_session(url: str, token: str, stream: LiteAvatarStream, settings: 
 def load(settings: Settings) -> LiteAvatarStream:
     t = time.perf_counter()
     s = from_settings(settings)
-    logger.info("models loaded in %.1fs (%dx%d @ %d fps, presenter %s)", time.perf_counter() - t, s.width, s.height,
-                s.out_fps, settings.presenter)
+    logger.info(
+        "models loaded in %.1fs (%dx%d @ %d fps, presenter %s)",
+        time.perf_counter() - t,
+        s.width,
+        s.height,
+        s.out_fps,
+        settings.presenter,
+    )
     return s
 
 
-def main(settings: Settings, *, warm: bool, url: str | None = None, token: str | None = None,
-         presenter: str | None = None) -> None:
+def main(
+    settings: Settings, *, warm: bool, url: str | None = None, token: str | None = None, presenter: str | None = None
+) -> None:
     stream = load(settings)
     if warm:
         print("READY", flush=True)

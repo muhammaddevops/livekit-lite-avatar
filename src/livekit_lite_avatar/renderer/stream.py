@@ -26,14 +26,14 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-FPS = 30        # LiteAvatar's native parameter rate
-SR = 16000      # model sample rate
-WIN = 30        # frames per audio2mouth window (1 s)
-HOP = 24        # frames committed per window (0.8 s)
+FPS = 30  # LiteAvatar's native parameter rate
+SR = 16000  # model sample rate
+WIN = 30  # frames per audio2mouth window (1 s)
+HOP = 24  # frames committed per window (0.8 s)
 FADE = WIN - HOP
 LOOKAHEAD = 15  # frames of extra audio wanted before a window is processed (0.5 s)
-LEFT_CTX = 30   # frames of audio before the window given to the feature encoder (1 s)
-HIST = 30       # committed frames kept for smoothing
+LEFT_CTX = 30  # frames of audio before the window given to the feature encoder (1 s)
+HIST = 30  # committed frames kept for smoothing
 # Top principal components of audio2mouth's output on English and Arabic test speech. The first (70% of the
 # variance) is the jaw opening; `open_gain` scales only that direction.
 _MOUTH_PCS = Path(__file__).with_name("mouth_pcs.npy")
@@ -149,8 +149,11 @@ class LiteAvatarStream:
         t = k / self.out_fps
         two_pi = 2 * np.pi
         a = self.head_motion
-        rot = a * (0.55 * np.sin(two_pi * t / 7.3) + 0.35 * np.sin(two_pi * t / 3.7 + 1.3)
-                   + 0.6 * talk * np.sin(two_pi * t / 2.3 + 0.4))
+        rot = a * (
+            0.55 * np.sin(two_pi * t / 7.3)
+            + 0.35 * np.sin(two_pi * t / 3.7 + 1.3)
+            + 0.6 * talk * np.sin(two_pi * t / 2.3 + 0.4)
+        )
         h, w = frame.shape[:2]
         tx = a * w * (0.004 * np.sin(two_pi * t / 9.1 + 0.5))
         ty = a * h * (0.003 * np.sin(two_pi * t / 5.3) + 0.012 * nod)
@@ -161,17 +164,16 @@ class LiteAvatarStream:
 
     def _energy(self, t0: float, t1: float) -> float:
         """Speech loudness of [t0, t1) seconds of this segment, 0 (quiet) .. 1 (loud)."""
-        x = self.audio[int(t0 * SR): int(t1 * SR)]
+        x = self.audio[int(t0 * SR) : int(t1 * SR)]
         if not len(x):
             return 0.0
-        db = 20 * np.log10(np.sqrt(np.mean(x ** 2)) + 1e-9)
+        db = 20 * np.log10(np.sqrt(np.mean(x**2)) + 1e-9)
         return float(np.clip((db + 45) / 30, 0, 1))
 
     def _draw(self, params: np.ndarray) -> np.ndarray:
         i = self._pp(self.k_next)  # the caller sets k_next so speech continues the idle motion
         self.k_next += 1
-        out = self._av.generator(self._av.ref_img_list[i],
-                                 self.torch.from_numpy(params[None].astype(np.float32)))
+        out = self._av.generator(self._av.ref_img_list[i], self.torch.from_numpy(params[None].astype(np.float32)))
         mouth = ((out[0].permute(1, 2, 0).numpy() / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)[:, :, ::-1]
         y1, y2, x1, x2 = self._box
         mouth = cv2.resize(mouth, (x2 - x1, y2 - y1), interpolation=cv2.INTER_AREA)
@@ -183,12 +185,12 @@ class LiteAvatarStream:
     # ---------- one spoken segment
     def reset(self) -> None:
         self.audio = np.zeros(0, dtype=np.float32)  # 16 kHz mono, whole segment so far
-        self.done = 0                                 # frames committed
-        self._tail: np.ndarray | None = None          # previous window's uncommitted frames (FADE x 32)
-        self._hist = np.zeros((0, 32), np.float32)    # recent raw committed params, for smoothing
+        self.done = 0  # frames committed
+        self._tail: np.ndarray | None = None  # previous window's uncommitted frames (FADE x 32)
+        self._hist = np.zeros((0, 32), np.float32)  # recent raw committed params, for smoothing
         self.stats = {"windows": 0, "compute_s": 0.0}
-        self._out_k = 0                               # output frames produced for this segment
-        self._drawn = 0                               # output frames drawn for this segment
+        self._out_k = 0  # output frames produced for this segment
+        self._drawn = 0  # output frames drawn for this segment
         self._prev: tuple[float, np.ndarray] | None = None  # last 30 fps row, for resampling across windows
 
     def feed(self, pcm16k: np.ndarray) -> None:
@@ -206,7 +208,7 @@ class LiteAvatarStream:
 
     def _features(self, c0: int, c1: int) -> np.ndarray:
         """Paraformer features for frames [c0, c1), one row per 30 fps frame."""
-        seg = self.audio[int(c0 / FPS * SR): int(c1 / FPS * SR)]
+        seg = self.audio[int(c0 / FPS * SR) : int(c1 / FPS * SR)]
         feats = self._extract(seg, c1 - c0)
         if feats.shape[0] < c1 - c0:  # keep indices aligned if the encoder returns fewer frames
             feats = np.concatenate([feats, np.repeat(feats[-1:], c1 - c0 - feats.shape[0], 0)])
@@ -214,7 +216,7 @@ class LiteAvatarStream:
 
     def _window_params(self, win_start: int, feats: np.ndarray, c0: int) -> np.ndarray:
         """audio2mouth for frames [win_start, win_start + WIN), shape (WIN, 32)."""
-        win = feats[win_start - c0: win_start - c0 + WIN]
+        win = feats[win_start - c0 : win_start - c0 + WIN]
         if win.shape[0] < WIN:
             win = np.concatenate([win, np.repeat(win[-1:], WIN - win.shape[0], 0)])
         ph = np.zeros((1, WIN, 2), np.float32)
@@ -229,11 +231,11 @@ class LiteAvatarStream:
         hop = SR // FPS
         total = self._frames_avail()
         lo, hi = max(0, start - 20), min(total, start + n + 20)
-        x = self.audio[lo * hop: hi * hop]
+        x = self.audio[lo * hop : hi * hop]
         if len(x) < hop:
             return np.zeros(n, np.float32)
         frames = x[: (len(x) // hop) * hop].reshape(-1, hop)
-        quiet = 20 * np.log10(np.sqrt((frames ** 2).mean(1)) + 1e-9) < -50
+        quiet = 20 * np.log10(np.sqrt((frames**2).mean(1)) + 1e-9) < -50
         run = np.zeros(len(quiet), bool)
         i = 0
         while i < len(quiet):
@@ -247,7 +249,7 @@ class LiteAvatarStream:
             else:
                 i += 1
         s = np.convolve(np.pad(run.astype(np.float32), 2, mode="edge"), [0.1, 0.2, 0.4, 0.2, 0.1], "same")[2:-2]
-        out = s[start - lo: start - lo + n]
+        out = s[start - lo : start - lo + n]
         return np.pad(out, (0, n - len(out))) if len(out) < n else out
 
     def step(self, final: bool) -> list[tuple[np.ndarray, float]]:
@@ -307,19 +309,19 @@ class LiteAvatarStream:
         start = self.done
         last = final and start + HOP >= total
         win_start = start if not last or total - start >= WIN or start < WIN else total - WIN
-        p = self._window_params(win_start, feats, c0)[start - win_start:]
+        p = self._window_params(win_start, feats, c0)[start - win_start :]
         if self._tail is not None:  # cross-fade into the previous window's overlap
             k = min(FADE, len(p), len(self._tail))
             w = (np.arange(1, k + 1, dtype=np.float32) / (k + 1))[:, None]
             p[:k] = self._tail[:k] * (1 - w) + p[:k] * w
         n = (total - start) if last else min(HOP, total - start)
-        commit, self._tail = p[:n], (None if last else p[n:n + FADE])
+        commit, self._tail = p[:n], (None if last else p[n : n + FADE])
         # zero-phase smoothing over [history, new, lookahead]
         future = self._tail if self._tail is not None else np.zeros((0, 32), np.float32)
         seq = np.concatenate([self._hist, commit, future])
         if len(seq) > 15:
             seq = self._filtfilt(self._b, self._a, seq, axis=0, padtype=None).astype(np.float32)
-        smooth = seq[len(self._hist): len(self._hist) + n]
+        smooth = seq[len(self._hist) : len(self._hist) + n]
         self._hist = np.concatenate([self._hist, commit])[-HIST:]
         sil = self._silence(start, n)[:, None]
         smooth = smooth * (1 - sil) + self.neutral * sil

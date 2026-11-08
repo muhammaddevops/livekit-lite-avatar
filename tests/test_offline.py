@@ -20,8 +20,9 @@ from livekit_lite_avatar.renderer import assets
 from livekit_lite_avatar.renderer.settings import Settings
 
 SETTINGS = Settings.from_env()
-pytestmark = pytest.mark.skipif(bool(assets.check(SETTINGS)),
-                                reason="renderer assets not installed (run: liteavatar-renderer setup)")
+pytestmark = pytest.mark.skipif(
+    bool(assets.check(SETTINGS)), reason="renderer assets not installed (run: liteavatar-renderer setup)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -68,7 +69,7 @@ def test_worker_generator_in_real_time(stream, wav):
     async def go():
         async def feed():  # TTS-like: 20 ms frames, faster than real time
             for i in range(0, len(pcm), 480):
-                chunk = pcm[i:i + 480]
+                chunk = pcm[i : i + 480]
                 await gen.push_audio(rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, len(chunk)))
             await gen.push_audio(AudioSegmentEnd())
 
@@ -89,15 +90,17 @@ def test_worker_generator_in_real_time(stream, wav):
 
     seq, played = asyncio.run(asyncio.wait_for(go(), timeout=len(pcm) / SAMPLE_RATE * 3 + 30))
     first = next(i for i, (kind, _) in enumerate(seq) if kind == "a")
-    reply = seq[first - 1:]
+    reply = seq[first - 1 :]
     audio_out = len(played)
     pairs = sum(1 for (k1, _), (k2, _) in itertools.pairwise(reply) if k1 == "v" and k2 == "a")
     stalls = sum(1 for (k1, _), (k2, _) in itertools.pairwise(reply) if k1 == "v" and k2 == "v")
-    print(f"\n{pairs} audio chunks with their frames, {stalls} stalled frames, "
-          f"{first - 1} idle frames before the reply's audio started")
+    print(
+        f"\n{pairs} audio chunks with their frames, {stalls} stalled frames, "
+        f"{first - 1} idle frames before the reply's audio started"
+    )
     # the reply's audio comes out whole and unchanged, then a little silence while the mouth eases shut
-    assert np.array_equal(played[:len(pcm)], pcm), "the reply's audio was not played back unchanged"
-    assert not played[len(pcm):].any(), "unexpected sound after the reply"
+    assert np.array_equal(played[: len(pcm)], pcm), "the reply's audio was not played back unchanged"
+    assert not played[len(pcm) :].any(), "unexpected sound after the reply"
     assert audio_out - len(pcm) <= (SETTINGS.lip_delay_frames + 6) * spf, "too much silence after the reply"
     assert pairs == audio_out // spf, "an audio chunk came out without its video frame"
     assert stalls <= 2, "the renderer fell behind real time during the reply"

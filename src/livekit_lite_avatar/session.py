@@ -83,8 +83,10 @@ class LiteAvatarSession(AvatarSession):
         livekit_api_key = livekit_api_key or os.getenv("LIVEKIT_API_KEY")
         livekit_api_secret = livekit_api_secret or os.getenv("LIVEKIT_API_SECRET")
         if not livekit_url or not livekit_api_key or not livekit_api_secret:
-            raise LiteAvatarError("livekit_url, livekit_api_key and livekit_api_secret must be given as arguments "
-                                  "or LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET")
+            raise LiteAvatarError(
+                "livekit_url, livekit_api_key and livekit_api_secret must be given as arguments "
+                "or LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET"
+            )
         await super().start(agent_session, room)
         job_ctx = get_job_context()
         token = self.mint_token(
@@ -100,6 +102,9 @@ class LiteAvatarSession(AvatarSession):
                 destination_identity=self._identity,
                 wait_remote_track=rtc.TrackKind.KIND_VIDEO,  # buffer audio until the face is published
                 sample_rate=SAMPLE_RATE,
+                # the renderer reports when each reply really starts playing, so the agent's speaking state,
+                # transcription timing and playback-latency metrics follow the avatar, not the audio upload
+                wait_playback_start=True,
             )
         )
         logger.info("liteavatar renderer accepted the session", extra={"renderer": self._renderer_url})
@@ -124,8 +129,10 @@ class LiteAvatarSession(AvatarSession):
         headers = {"X-Renderer-Secret": self._secret} if self._secret else {}
         try:
             timeout = aiohttp.ClientTimeout(total=self._timeout)
-            async with aiohttp.ClientSession(timeout=timeout) as http, \
-                    http.post(f"{self._renderer_url}/sessions", json=body, headers=headers) as resp:
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as http,
+                http.post(f"{self._renderer_url}/sessions", json=body, headers=headers) as resp,
+            ):
                 if resp.status != 201:
                     raise LiteAvatarError(f"renderer refused the session: {resp.status} {await resp.text()}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:

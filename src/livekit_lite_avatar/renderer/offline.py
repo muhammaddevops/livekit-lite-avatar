@@ -42,13 +42,20 @@ class RenderResult:
 
     def summary(self) -> str:
         first = f"{self.first_frames_after_s:.2f}s" if self.first_frames_after_s is not None else "n/a"
-        return (f"{self.frames} frames ({self.width}x{self.height} @ {self.fps} fps) for {self.audio_s:.2f}s of audio "
-                f"in {self.render_s:.2f}s: real-time factor {self.real_time_factor:.2f}; first frames once {first} "
-                f"of audio had arrived; models loaded in {self.load_s:.1f}s")
+        return (
+            f"{self.frames} frames ({self.width}x{self.height} @ {self.fps} fps) for {self.audio_s:.2f}s of audio "
+            f"in {self.render_s:.2f}s: real-time factor {self.real_time_factor:.2f}; first frames once {first} "
+            f"of audio had arrived; models loaded in {self.load_s:.1f}s"
+        )
 
 
-def render_file(wav: str | Path, out: str | Path, settings: Settings, presenter: str | None = None,
-                stream: LiteAvatarStream | None = None) -> RenderResult:
+def render_file(
+    wav: str | Path,
+    out: str | Path,
+    settings: Settings,
+    presenter: str | None = None,
+    stream: LiteAvatarStream | None = None,
+) -> RenderResult:
     """Render `wav` to `out`. Pass an already loaded `stream` to skip loading the models."""
     import cv2
     import librosa
@@ -66,7 +73,7 @@ def render_file(wav: str | Path, out: str | Path, settings: Settings, presenter:
     first_at = None
     t0 = time.perf_counter()
     for i in range(0, len(audio), step):
-        s.feed(audio[i:i + step])
+        s.feed(audio[i : i + step])
         while s.ready(False):
             frames += s.step(False)
             if first_at is None and frames:
@@ -83,11 +90,39 @@ def render_file(wav: str | Path, out: str | Path, settings: Settings, presenter:
         vw.write(s.move(f, k, energy))
     vw.release()
     if ffmpeg is not None:
-        subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(silent), "-i", str(wav), "-c:v", "libx264",
-                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(out)], check=True)
+        subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(silent),
+                "-i",
+                str(wav),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(out),
+            ],
+            check=True,
+        )
         silent.unlink()
-    return RenderResult(output=out, frames=len(frames), audio_s=len(audio) / SR, render_s=render_s, load_s=load_s,
-                        first_frames_after_s=first_at, width=s.width, height=s.height, fps=s.out_fps)
+    return RenderResult(
+        output=out,
+        frames=len(frames),
+        audio_s=len(audio) / SR,
+        render_s=render_s,
+        load_s=load_s,
+        first_frames_after_s=first_at,
+        width=s.width,
+        height=s.height,
+        fps=s.out_fps,
+    )
 
 
 def default_wav(settings: Settings) -> Path:

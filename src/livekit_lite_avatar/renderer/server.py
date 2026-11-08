@@ -47,8 +47,13 @@ class Pool:
     async def _spawn(self) -> None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "livekit_lite_avatar.renderer", "worker", "--warm",
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                sys.executable,
+                "-m",
+                "livekit_lite_avatar.renderer",
+                "worker",
+                "--warm",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
                 env={**os.environ, **self.settings.to_env()},
             )
             self.procs.add(proc)
@@ -67,8 +72,10 @@ class Pool:
 
     def top_up(self, delay: float = 0.0) -> None:
         s = self.settings
-        while (self.warm.qsize() + self.loading < s.warm_workers
-               and len(self.active) + self.warm.qsize() + self.loading < s.max_sessions):
+        while (
+            self.warm.qsize() + self.loading < s.warm_workers
+            and len(self.active) + self.warm.qsize() + self.loading < s.max_sessions
+        ):
             self.loading += 1  # count it now so a second call doesn't spawn twice
 
             async def _later() -> None:
@@ -131,8 +138,7 @@ def create_app(settings: Settings, pool: Pool | None = None) -> web.Application:
 
     async def sessions(request: web.Request) -> web.Response:
         pool_: Pool = request.app[POOL]
-        if settings.secret and not hmac.compare_digest(request.headers.get("X-Renderer-Secret", ""),
-                                                       settings.secret):
+        if settings.secret and not hmac.compare_digest(request.headers.get("X-Renderer-Secret", ""), settings.secret):
             return web.json_response({"error": "forbidden"}, status=403)
         try:
             body = await request.json()
@@ -145,8 +151,10 @@ def create_app(settings: Settings, pool: Pool | None = None) -> web.Application:
             if not isinstance(presenter, str) or not valid_presenter_id(presenter):
                 return web.json_response({"error": "invalid presenter id"}, status=400)
             if presenter not in settings.installed_presenters():
-                return web.json_response({"error": f"presenter {presenter} is not installed",
-                                          "installed": settings.installed_presenters()}, status=400)
+                return web.json_response(
+                    {"error": f"presenter {presenter} is not installed", "installed": settings.installed_presenters()},
+                    status=400,
+                )
         if len(pool_.active) >= settings.max_sessions:
             return web.json_response({"error": "busy"}, status=503)
         job = {"url": body["url"], "token": body["token"], "presenter": presenter}
@@ -158,8 +166,15 @@ def create_app(settings: Settings, pool: Pool | None = None) -> web.Application:
 
     async def health(request: web.Request) -> web.Response:
         pool_: Pool = request.app[POOL]
-        return web.json_response({"ready": pool_.warm.qsize(), "loading": pool_.loading, "active": len(pool_.active),
-                                  "max": settings.max_sessions, "presenters": settings.installed_presenters()})
+        return web.json_response(
+            {
+                "ready": pool_.warm.qsize(),
+                "loading": pool_.loading,
+                "active": len(pool_.active),
+                "max": settings.max_sessions,
+                "presenters": settings.installed_presenters(),
+            }
+        )
 
     async def _startup(app: web.Application) -> None:
         app[POOL] = pool or Pool(settings)
@@ -180,11 +195,19 @@ def serve(settings: Settings) -> None:
 
     missing = assets.check(settings)
     if missing:
-        raise SystemExit("renderer is not set up; missing:\n  " + "\n  ".join(missing)
-                         + "\nRun: liteavatar-renderer setup")
+        raise SystemExit(
+            "renderer is not set up; missing:\n  " + "\n  ".join(missing) + "\nRun: liteavatar-renderer setup"
+        )
     if settings.host not in ("127.0.0.1", "localhost", "::1") and not settings.secret:
-        logger.warning("listening on %s without LITEAVATAR_SECRET: anyone who can reach it can start sessions",
-                       settings.host)
-    logger.info("serving on http://%s:%d (presenter %s, %d fps, max %d sessions)", settings.host, settings.port,
-                settings.presenter, settings.fps, settings.max_sessions)
+        logger.warning(
+            "listening on %s without LITEAVATAR_SECRET: anyone who can reach it can start sessions", settings.host
+        )
+    logger.info(
+        "serving on http://%s:%d (presenter %s, %d fps, max %d sessions)",
+        settings.host,
+        settings.port,
+        settings.presenter,
+        settings.fps,
+        settings.max_sessions,
+    )
     web.run_app(create_app(settings), host=settings.host, port=settings.port, print=None)
