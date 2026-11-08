@@ -82,7 +82,7 @@ class LiteAvatarStream:
         open_gain: float = 1.0,
         smooth_hz: float = 10.0,
         head_motion: float = 0.0,
-        decoder: str = "torch",
+        decoder: str = "onnx",
     ) -> None:
         import torch
         from loguru import logger as loguru_logger

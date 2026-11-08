@@ -27,7 +27,8 @@ await avatar.start(session, room=ctx.room)
 - **Fast enough on a laptop.** An Apple M4 Pro draws 576x792 at 25 fps in under half real time, and speech
   reaches participants about 0.35 s after `say()`.
 - **Degrades gracefully.** On a CPU too slow for real time, the voice stays whole and smooth and late frames are
-  skipped. Each worker measures the machine at startup and suggests a frame rate.
+  skipped. Each worker measures the machine at startup and suggests a frame rate. If the avatar leaves mid-call,
+  the agent carries on with its own voice.
 - **Tested end to end.** CI runs a real `AgentSession`, the renderer and a measuring viewer on a local LiveKit
   server, on Linux x86, Linux ARM and macOS.
 
@@ -85,8 +86,12 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(agent=MyAgent(), room=ctx.room)
 ```
 
-[`examples/agent.py`](examples/agent.py) is a complete agent (STT, LLM and TTS through LiveKit Inference). The agent's
-audio is only re-routed once the renderer has accepted the session, so after a `LiteAvatarError` nothing has changed.
+[`examples/agent.py`](examples/agent.py) is a complete agent (STT, LLM and TTS through LiveKit Inference).
+
+`start()` returns once the avatar is in the room, and only then routes the agent's audio to it. It raises
+`LiteAvatarError` if the renderer is unreachable or busy, or couldn't join the room (a bad LiveKit URL from the
+renderer's side, for example), and then leaves everything as it was. If the avatar leaves later (the renderer
+stopped, or the session time limit passed), the agent switches back to publishing its own voice.
 
 | `LiteAvatarSession(...)` | Default | |
 |---|---|---|
@@ -94,7 +99,7 @@ audio is only re-routed once the renderer has accepted the session, so after a `
 | `presenter` | the renderer's default | any presenter installed on the renderer |
 | `renderer_secret` | `LITEAVATAR_SECRET` | sent as `X-Renderer-Secret` |
 | `avatar_participant_identity`, `avatar_participant_name` | `liteavatar`, `Avatar` | how the avatar appears in the room |
-| `request_timeout` | 90 s | how long to wait for the renderer to accept |
+| `request_timeout` | 90 s | how long to wait for the renderer (up to 60 s for a free worker, 25 s to join) |
 
 `start()` also takes `livekit_url`, `livekit_api_key` and `livekit_api_secret`, which otherwise come from the usual
 `LIVEKIT_*` variables.
@@ -137,8 +142,11 @@ renderer worker is one process serving one session:
 5. LiveKit's `AVSynchronizer` publishes video and audio together. Between replies, the presenter's idle loop
    plays.
 
-A reply's first frames are ready about 0.3 s after its audio arrives. If drawing falls behind, the next audio
-plays over the last picture and the frames it missed are skipped, so the voice never waits for the face.
+Each 0.8 s window needs 1.5 s of audio beyond it (1 s for the window, 0.5 s of lookahead), so a reply starts
+drawing once 1.6 s of its audio has arrived. Most TTS runs well ahead of real time, so that is almost at once, and
+the first frames are ready about 0.3 s later. With TTS that streams only at real-time pace, the reply starts about
+1.6 s after its first audio and then keeps up without skipping. If drawing does fall behind (a slow CPU), the next
+audio plays over the last picture and the frames it missed are skipped, so the voice never waits for the face.
 
 ## Performance
 
@@ -155,9 +163,18 @@ same laptop (0.44 to 0.47). The other rows are GitHub's shared CI runners, from 
 [CI run](https://github.com/muhammaddevops/livekit-lite-avatar/actions/workflows/ci.yml); their run summaries
 show the full benchmark and a profile.
 
-Where the time goes on the M4 Pro, per second of speech (`scripts/profile_renderer.py`): the face decoder takes
-279 ms (11 ms a frame), speech features 120 ms and audio2mouth 10 ms. The decoder's cost is per frame, so a lower
-`--fps` is the main lever on slower machines.
+Most of the time goes on the presenter's face decoder, which draws each frame's mouth. LiteAvatar ships it as
+TorchScript; the renderer rebuilds the same network from its weights (identical output, to within 1e-5) and runs it
+in ONNX Runtime, which is much faster on CPU:
+
+| Face decoder, ms per frame | Apple M4 Pro | Linux x86 runner (4 vCPU) | Linux ARM runner (4 vCPU) | macOS M1 runner (3 vCPU) |
+|---|---|---|---|---|
+| LiteAvatar's TorchScript | 10.7 | 73.6 | 61.9 | 42.8 |
+| ONNX Runtime (default) | 8.1 | 24.5 | 21.4 | 25.5 |
+
+Per second of speech, the rest is speech features (120 ms on the M4 Pro) and audio2mouth (10 ms). The decoder's cost
+is per frame, so a lower `--fps` is the main lever on slower machines. `LITEAVATAR_DECODER=torch` uses LiteAvatar's
+own decoder.
 
 **Will it run on my machine?**
 
@@ -174,6 +191,7 @@ override them. The server passes its settings on to every worker it starts.
 | Setting | Variable | Flag | Default | Notes |
 |---|---|---|---|---|
 | Frame rate | `LITEAVATAR_FPS` | `--fps` | 25 | the main lever on slower CPUs; 30 is smoother for ~10% more CPU |
+| Face decoder | `LITEAVATAR_DECODER` | `--decoder` | `onnx` | `torch`: LiteAvatar's own TorchScript (slower) |
 | Width | `LITEAVATAR_WIDTH` | `--width` | 576 | height follows the presenter |
 | Torch threads | `LITEAVATAR_THREADS` | `--threads` | 6, or the cores if fewer | per worker |
 | Lip delay | `LITEAVATAR_LIP_DELAY_FRAMES` | `--lip-delay-frames` | 1 | video starts this many frames after its audio |
@@ -188,14 +206,14 @@ override them. The server passes its settings on to every worker it starts.
 | Data folder | `LITEAVATAR_HOME` | `--home` | `~/.cache/livekit-lite-avatar` | LiteAvatar's code, weights and presenters |
 
 `GET /health` returns the number of ready, loading and active workers, the installed presenters and the speed
-estimate.
+estimate. It answers 503 when workers keep failing to load, so a container health check catches a broken setup.
 
 ## Presenters
 
 The presenters are Alibaba's: LiteAvatar has no public tool to make one from your own photo or video. `setup`
 installs the default presenter from ModelScope's
-[LiteAvatarGallery](https://modelscope.cn/models/HumanAIGC-Engineering/LiteAvatarGallery) and `sample`, the
-presenter that comes with LiteAvatar's code.
+[LiteAvatarGallery](https://modelscope.cn/models/HumanAIGC-Engineering/LiteAvatarGallery) (checked against a
+known SHA-256, like the weights) and `sample`, the presenter that comes with LiteAvatar's code.
 
 ```bash
 .venv/bin/liteavatar-renderer setup --presenter <id> [--gallery 20250408]   # more from the gallery
@@ -256,13 +274,14 @@ These are off by default, because in a live call they looked worse overall. Try 
 
 - **Mouth only.** LiteAvatar redraws the mouth area; the rest is the presenter's idle video, looped. There are no
   head turns or gestures.
-- **CPU-bound.** The face decoder costs about 30 ms of CPU time per frame on one core of an M4 Pro. Small cloud VMs
-  don't keep up at 25 fps: the voice stays smooth, but lips skip frames. See [Performance](#performance).
+- **CPU-bound.** Small cloud VMs don't keep up at 25 fps: the voice stays smooth, and the lips move at the rate
+  frames can be drawn. See [Performance](#performance).
 - **Startup.** A worker takes from about 7 s (M4 Pro) to a minute to load, which is why one is kept warm. If none
-  is ready, `start()` waits up to `request_timeout`, then raises `LiteAvatarError`.
-- **Versions.** The agent side needs `livekit-agents` 1.8.x. The worker overrides a private method of LiveKit's
-  `AvatarRunner` to publish a single layer, and the stream wrapper calls LiteAvatar's internals, so LiteAvatar is
-  pinned to a tested commit. The renderer runs on Python 3.10 (3.11 and 3.12 should work, untested).
+  is free, the renderer waits up to 60 s for one, then the agent gets a `LiteAvatarError`.
+- **Versions.** The agent side needs `livekit-agents` 1.8.x. The renderer pins 1.8.11, because it builds on some
+  of its internals: `AvatarRunner`'s publishing (to send a single layer), the data-stream receiver, and RoomIO's
+  audio output for the fall-back to voice. The stream wrapper calls LiteAvatar's internals, so LiteAvatar is pinned
+  to a tested commit. The renderer runs on Python 3.10 (3.11 and 3.12 should work, untested).
 - **Separate process.** The renderer changes into LiteAvatar's folder while importing it, because LiteAvatar loads
   its weights from relative paths. Run it as its own process, as `serve` does, not inside your agent.
 
@@ -275,13 +294,17 @@ These are off by default, because in a live call they looked worse overall. Try 
 The live tests start the open-source `livekit-server` with throwaway keys, the renderer, an agent worker that
 registers and is dispatched like a production agent, and a viewer that measures what a participant receives:
 - who publishes, and whether simulcast is off;
-- frame rate, and the longest gap between frames;
+- frame rate, new lip pictures per second, and the longest gap between frames;
 - whether all the speech arrives;
 - how soon it starts;
-- how quickly an interruption silences it.
+- how quickly an interruption silences it;
+- whether the agent's voice carries on when the avatar is removed mid-call.
 
-Another test drives the browser demo's agent with a synthetic microphone. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for more.
+Offline tests play the worker's output at real-time pace in four situations: TTS faster than real time, TTS at
+real-time pace, a CPU too slow for real time, and a reply right after an interruption. In each, the reply's audio
+must come out bit-identical and without a pause. The server is tested against fake workers that load, fail to join,
+or die while loading. Another test drives the browser demo's agent with a synthetic microphone. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for more.
 
 ## Licences
 

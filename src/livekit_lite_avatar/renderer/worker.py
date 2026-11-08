@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -44,7 +45,8 @@ _END = object()
 LEAD_FRAMES = 8  # about the time to the first drawn frame of a reply
 DRAW_BATCH = 6  # frames drawn per hand-over
 FIRST_BATCH = 2  # each window's first hand-over is smaller, so it is ready sooner (drawing is faster than playback)
-CATCH_UP = 2  # when behind, skip this many frames beyond those already played, so the next drawn one is on time
+# When playback has caught up with drawing, the next frame drawn must be one that will still be ahead of playback
+# once it is ready: as many frames ahead as drawing one takes, plus one.
 
 
 class CrispAvatarRunner(AvatarRunner):
@@ -253,6 +255,7 @@ class LiteAvatarGenerator(VideoGenerator):
         self._rs = Resampler24to16()
         self._playing: _Reply | None = None  # the reply being played, and how many of its frames have played
         self._played = 0
+        self._frame_s = 0.5 / stream.out_fps  # recent time to draw one frame, for aiming ahead when behind
         self.av_sync: rtc.AVSynchronizer | None = None
 
     async def push_audio(self, frame: rtc.AudioFrame | AudioSegmentEnd) -> None:
@@ -367,17 +370,29 @@ class LiteAvatarGenerator(VideoGenerator):
             # draw a few frames at a time and hand each batch over at once, so playback starts early
             j = 0
             while j < len(rows) and epoch == self._epoch:
-                played = self._played if self._playing is reply else 0
-                if played > emitted:  # their audio already played over an earlier picture: skip, and catch up
-                    n = min(len(rows) - j, played - emitted + CATCH_UP)
+                playing = self._playing is reply and self._played > 0
+                played = self._played if playing else 0
+                # frames playback moves on while one is drawn, plus one: playback may be part-way through a frame
+                lead = math.ceil(self._frame_s * self._fps) + 1
+                if playing and played + lead > emitted:
+                    # the next frames would be late: skip to the first one that will be ready in time
+                    n = min(len(rows) - j, played + lead - emitted)
                     self._s.skip(n)
                     reply.skipped += n
                     emitted += n
                     j += n
                     continue
-                batch = rows[j : j + (FIRST_BATCH if j == 0 else DRAW_BATCH)]  # each window's first frames early
+                # only just ahead of playback: one frame at a time, so each is ready in time; otherwise a few,
+                # with each window's first frames early
+                just_ahead = playing and emitted - played < lead + DRAW_BATCH
+                size = 1 if just_ahead else (FIRST_BATCH if j == 0 else DRAW_BATCH)
+                batch = rows[j : j + size]
                 k0 = self._s.k_next
+                t_draw = time.perf_counter()
                 frames = await asyncio.to_thread(self._s.draw, batch)
+                if frames:
+                    per_frame = (time.perf_counter() - t_draw) / len(frames)
+                    self._frame_s += 0.3 * (per_frame - self._frame_s)
                 if epoch != self._epoch:
                     break
                 if frames and not t_first:

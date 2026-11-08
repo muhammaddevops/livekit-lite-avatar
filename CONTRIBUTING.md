@@ -24,10 +24,11 @@ keeps the functional checks and skips the timing ones.
 
 | Test | What it covers |
 |---|---|
-| `test_session.py`, `test_server.py` | agent-side token and request; server validation, auth and settings |
+| `test_session.py` | agent-side token and request to the renderer |
+| `test_server.py` | server validation, auth and settings; the real pool against fake workers that load, join, fail to join or die while loading |
 | `test_resampler.py` | the incremental 24 to 16 kHz resampler matches resampling the whole reply |
-| `test_offline.py` | WAV in, MP4 out; the worker's generator played in real time, and on a simulated slow CPU |
-| `test_e2e.py` | livekit-server, renderer, a real `AgentSession` and a viewer: publishing, playback, interruption |
+| `test_offline.py` | WAV in, MP4 out; the worker's generator at real-time pace with fast TTS, real-time TTS, a simulated slow CPU, and a reply after an interruption |
+| `test_e2e.py` | livekit-server, renderer, a real `AgentSession` and a viewer: publishing, playback, interruption, and the fall-back to voice when the avatar leaves |
 | `test_demo.py` | the browser demo's agent: greeting, then repeating a microphone track |
 
 For performance work, `scripts/profile_renderer.py` splits the time per second of speech into speech features,

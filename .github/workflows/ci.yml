@@ -18,8 +18,8 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
       - run: uvx ruff@0.17.4 check src tests examples scripts
       - run: uvx ruff@0.17.4 format --check src tests examples scripts
 
@@ -31,8 +31,10 @@ jobs:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          cache-python: true  # keep uv's Python downloads in the Actions cache
       - name: Install the agent side only (no torch), latest compatible dependencies
         run: |
           uv venv -p ${{ matrix.python }} .venv
@@ -54,11 +56,13 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          cache-python: true
       - name: Restore LiteAvatar assets (~1.3 GB, downloaded from upstream on a cache miss)
         id: assets
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/livekit-lite-avatar
           key: liteavatar-assets-v1-${{ runner.os }}-${{ hashFiles('src/livekit_lite_avatar/renderer/assets.py') }}
@@ -81,7 +85,7 @@ jobs:
         run: scripts/setup-renderer.sh
       - name: Save LiteAvatar assets
         if: steps.assets.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/livekit-lite-avatar
           key: ${{ steps.assets.outputs.cache-primary-key }}
@@ -90,10 +94,10 @@ jobs:
           LITEAVATAR_PERF_CHECKS: "0"  # small shared runners are slower than real time: check behaviour here,
                                        # and report the timing in the benchmark below
         run: .venv/bin/pytest -p no:warnings -rA tests/
-      - name: Offline tests with the ONNX Runtime face decoder
+      - name: Offline tests with LiteAvatar's own TorchScript face decoder
         env:
           LITEAVATAR_PERF_CHECKS: "0"
-          LITEAVATAR_DECODER: onnx
+          LITEAVATAR_DECODER: torch
         run: .venv/bin/pytest -p no:warnings -rA tests/test_offline.py
       - name: Benchmark
         if: always() && steps.assets.outcome == 'success'
@@ -102,7 +106,7 @@ jobs:
           .venv/bin/python scripts/profile_renderer.py | tee profile.txt
           { echo "### Renderer on ${{ matrix.os }}"; echo; cat bench.md; echo; echo '```'; cat profile.txt; echo '```'; } \
             >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: benchmark-${{ matrix.os }}
@@ -118,9 +122,9 @@ jobs:
     if: ${{ !cancelled() }}  # a failure on another platform shouldn't skip the image test
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
         with:
           context: .
           load: true
@@ -129,7 +133,7 @@ jobs:
           cache-to: type=gha,mode=max
       - run: docker run --rm livekit-lite-avatar-renderer:ci --help
       - name: Restore LiteAvatar assets
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/livekit-lite-avatar
           key: liteavatar-assets-v1-${{ runner.os }}-${{ hashFiles('src/livekit_lite_avatar/renderer/assets.py') }}

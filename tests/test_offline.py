@@ -14,6 +14,7 @@ import asyncio
 import itertools
 import os
 import time
+import zlib
 
 import pytest
 
@@ -99,7 +100,7 @@ def _play_reply(stream, wav, extra_draw_s: float = 0.0, feed_pace: float = 0.0):
                 seq.append(("a", item.samples_per_channel))
                 played.append(np.frombuffer(item.data, np.int16))
             else:
-                seq.append(("v", 0))
+                seq.append(("v", zlib.crc32(bytes(item.data))))  # to tell new pictures from repeated ones
                 await asyncio.sleep(1 / stream.out_fps)  # play back at real-time pace, as AVSynchronizer does
         await feeder
         await gen.aclose()
@@ -110,6 +111,12 @@ def _play_reply(stream, wav, extra_draw_s: float = 0.0, feed_pace: float = 0.0):
     finally:
         stream.draw = real_draw
     return pcm, seq, played, drawn[0]
+
+
+def _new_pictures(seq) -> int:
+    """How many video frames in seq show a different picture from the one before."""
+    shown = [h for kind, h in seq if kind == "v"]
+    return sum(1 for a, b in itertools.pairwise(shown) if a != b)
 
 
 def _check_reply(pcm, seq, played, spf: int) -> tuple[int, int]:
@@ -138,7 +145,9 @@ def test_worker_generator_in_real_time(stream, wav):
     spf = SAMPLE_RATE // stream.out_fps
     pcm, seq, played, drawn = _play_reply(stream, wav)
     pairs, stalls = _check_reply(pcm, seq, played, spf)
-    print(f"\n{pairs} audio chunks with their frames, {drawn} drawn, {stalls} stalled frames")
+    print(
+        f"\n{pairs} audio chunks with their frames, {drawn} drawn, {_new_pictures(seq)} new pictures, {stalls} stalled"
+    )
     if PERF:
         assert stalls == 0, "the voice paused during the reply"
         assert drawn >= pairs - SETTINGS.lip_delay_frames - 3, "frames were skipped on a fast enough CPU"
@@ -151,9 +160,12 @@ def test_slow_cpu_keeps_the_voice_smooth(stream, wav):
     spf = SAMPLE_RATE // stream.out_fps
     pcm, seq, played, drawn = _play_reply(stream, wav, extra_draw_s=0.05)  # ~2.5x slower than real time
     pairs, stalls = _check_reply(pcm, seq, played, spf)
-    print(f"\nslow CPU: {pairs} audio chunks, {drawn} frames drawn, {stalls} stalled frames")
+    new = _new_pictures(seq)
+    print(f"\nslow CPU: {pairs} audio chunks, {drawn} frames drawn, {new} new pictures, {stalls} stalled frames")
     assert stalls == 0, "the voice paused while the renderer was behind"
     assert drawn < 0.8 * pairs, "the renderer should have skipped frames to keep up"
+    # the lips keep moving at about the rate frames can be drawn (~16 a second here), not frozen
+    assert new > 0.4 * pairs, "late frames were drawn and dropped instead of aiming ahead: the face froze"
 
 
 @pytest.mark.parametrize("pace", [1.0, 1.5])

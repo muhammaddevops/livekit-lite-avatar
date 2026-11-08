@@ -43,7 +43,7 @@ class Settings:
     open_gain: float = 1.0  # scales only the jaw-opening direction; 1.8 opens the mouth wider cleanly
     smooth_hz: float = 10.0  # low-pass on the mouth parameters (LiteAvatar's own value)
     head_motion: float = 0.0  # gentle sway and nods by moving the whole frame; softens the picture
-    decoder: str = "torch"  # face decoder: LiteAvatar's TorchScript ("torch") or the same network in ONNX Runtime
+    decoder: str = "onnx"  # face decoder: the network in ONNX Runtime (2-3x faster on x86), or LiteAvatar's "torch"
 
     # ---------- paths
     @property
@@ -121,7 +121,7 @@ _FLAGS = {
     "open_gain": (float, "scale the jaw opening only (LITEAVATAR_OPEN_GAIN, 1.0)"),
     "smooth_hz": (float, "mouth smoothing cut-off in Hz (LITEAVATAR_SMOOTH_HZ, 10)"),
     "head_motion": (float, "head sway amount, 0 = off (LITEAVATAR_HEAD_MOTION, 0)"),
-    "decoder": (str, "face decoder: torch or onnx (LITEAVATAR_DECODER, torch)"),
+    "decoder": (str, "face decoder: onnx or torch (LITEAVATAR_DECODER, onnx)"),
 }
 
 
