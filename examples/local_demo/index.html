@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiteAvatar demo</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #5d6573; --line: #e3e6eb;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8d96a0; --line: #30363d;
+            --accent: #2f81f7; --accent-text: #ffffff; --ok: #3fb950; --warn: #d29922; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; display: grid; place-items: center; }
+  main { width: min(560px, 100% - 32px); margin: 24px 0; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: var(--muted); }
+  .stage { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+           overflow: hidden; min-height: 360px; display: grid; place-items: center; }
+  video { display: block; max-width: 100%; max-height: 76vh; }
+  .placeholder { position: absolute; color: var(--muted); padding: 24px; text-align: center; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+           border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .pill { font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+  .pill b { color: var(--text); font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>LiteAvatar on LiveKit</h1>
+  <p>A local agent with a face drawn live on this computer's CPU. It greets you, then repeats what you say.</p>
+  <div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <div class="placeholder" id="placeholder">Press Start to join the room.</div>
+  </div>
+  <div class="bar">
+    <button class="primary" id="start">Start</button>
+    <button id="mic" disabled>Turn mic on</button>
+    <span class="pill"><span class="dot" id="dot"></span><b id="conn">not connected</b></span>
+    <span class="pill">agent <b id="state">–</b></span>
+    <span class="pill">video <b id="stats">–</b></span>
+  </div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"></script>
+<script>
+  const { Room, RoomEvent, Track } = LivekitClient;
+  const $ = (id) => document.getElementById(id);
+  // One full-quality layer is published; adaptive stream would size or pause it to fit the element.
+  const room = new Room({ adaptiveStream: false, dynacast: false });
+  let micOn = false;
+
+  function setConn(text, cls) { $("conn").textContent = text; $("dot").className = "dot " + (cls || ""); }
+
+  function showAgentState() {
+    for (const p of room.remoteParticipants.values()) {
+      const s = p.attributes["lk.agent.state"];
+      if (s) { $("state").textContent = s; return; }
+    }
+  }
+
+  // frame rate and resolution of what is actually being shown
+  let frames = 0, last = performance.now();
+  function countFrames() {
+    frames++;
+    const now = performance.now();
+    if (now - last >= 1000) {
+      const v = $("video");
+      $("stats").textContent = `${v.videoWidth}×${v.videoHeight} · ${Math.round(frames * 1000 / (now - last))} fps`;
+      frames = 0; last = now;
+    }
+    $("video").requestVideoFrameCallback(countFrames);
+  }
+
+  room
+    .on(RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === Track.Kind.Video) {
+        track.attach($("video"));
+        $("placeholder").hidden = true;
+        $("video").requestVideoFrameCallback(countFrames);
+      } else if (track.kind === Track.Kind.Audio) {
+        document.body.appendChild(track.attach());
+      }
+    })
+    .on(RoomEvent.ParticipantAttributesChanged, showAgentState)
+    .on(RoomEvent.ParticipantConnected, showAgentState)
+    .on(RoomEvent.Disconnected, () => setConn("disconnected", "warn"));
+
+  $("start").onclick = async () => {
+    const params = new URLSearchParams(location.hash.slice(1));  // run.py puts the server URL and a token here
+    const url = params.get("url"), token = params.get("token");
+    if (!url || !token) { setConn("open the link printed by run.py", "warn"); return; }
+    $("start").disabled = true;
+    setConn("connecting…");
+    try {
+      await room.connect(url, token);
+      await room.startAudio();  // the Start click is the user gesture browsers need before playing sound
+      setConn("connected", "ok");
+      $("placeholder").textContent = "Waiting for the avatar…";
+      $("mic").disabled = false;
+      showAgentState();
+    } catch (e) {
+      setConn("could not connect", "warn");
+      $("start").disabled = false;
+      console.error(e);
+    }
+  };
+
+  $("mic").onclick = async () => {
+    micOn = !micOn;
+    await room.localParticipant.setMicrophoneEnabled(micOn);
+    $("mic").textContent = micOn ? "Turn mic off" : "Turn mic on";
+  };
+</script>
+</body>
+</html>
