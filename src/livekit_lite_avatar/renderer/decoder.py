@@ -91,6 +91,10 @@ class OnnxDecoder:
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = threads
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # ONNX Runtime's threads busy-wait between operations by default: 72 ms of CPU for an 8 ms frame on an M4
+        # Pro. Without it, 44 ms for 8.5 ms, and the agent, LiveKit and other sessions on the machine get the rest.
+        opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
         self._session = ort.InferenceSession(buf.getvalue(), opts, providers=["CPUExecutionProvider"])
         self._numpy_refs: dict[int, dict[str, np.ndarray]] = {}
 

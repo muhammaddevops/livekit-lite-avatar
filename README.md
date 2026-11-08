@@ -24,8 +24,8 @@ await avatar.start(session, room=ctx.room)
 
 - **Drop-in.** The same shape as the hosted avatar plugins. The renderer reports when each reply really starts and
   stops playing, so the agent's speaking state, transcription timing and interruptions follow the avatar.
-- **Fast enough on a laptop.** An Apple M4 Pro draws 576x792 at 25 fps in under half real time, and speech
-  reaches participants about 0.35 s after `say()`.
+- **Fast enough on a laptop.** An Apple M4 Pro draws 576x792 at 25 fps in under 40% of real time, and speech
+  reaches participants about 0.4 s after `say()`.
 - **Degrades gracefully.** On a CPU too slow for real time, the voice stays whole and smooth and late frames are
   skipped. Each worker measures the machine at startup and suggests a frame rate. If the avatar leaves mid-call,
   the agent carries on with its own voice.
@@ -142,8 +142,8 @@ renderer worker is one process serving one session:
 5. LiveKit's `AVSynchronizer` publishes video and audio together. Between replies, the presenter's idle loop
    plays.
 
-Each 0.8 s window needs 1.5 s of audio beyond it (1 s for the window, 0.5 s of lookahead), so a reply starts
-drawing once 1.6 s of its audio has arrived. Most TTS runs well ahead of real time, so that is almost at once, and
+Each window is 1 s of speech plus 0.5 s of lookahead, and windows advance by 0.8 s, so a reply starts drawing once
+1.6 s of its audio has arrived (the first window, its lookahead and a 0.1 s margin). Most TTS runs well ahead of real time, so that is almost at once, and
 the first frames are ready about 0.3 s later. With TTS that streams only at real-time pace, the reply starts about
 1.6 s after its first audio and then keeps up without skipping. If drawing does fall behind (a slow CPU), the next
 audio plays over the last picture and the frames it missed are skipped, so the voice never waits for the face.
@@ -193,7 +193,7 @@ override them. The server passes its settings on to every worker it starts.
 | Frame rate | `LITEAVATAR_FPS` | `--fps` | 25 | the main lever on slower CPUs; 30 is smoother for ~10% more CPU |
 | Face decoder | `LITEAVATAR_DECODER` | `--decoder` | `onnx` | `torch`: LiteAvatar's own TorchScript (slower) |
 | Width | `LITEAVATAR_WIDTH` | `--width` | 576 | height follows the presenter |
-| Torch threads | `LITEAVATAR_THREADS` | `--threads` | 6, or the cores if fewer | per worker |
+| Threads | `LITEAVATAR_THREADS` | `--threads` | 6, or one fewer than the cores | per worker, for torch and ONNX Runtime |
 | Lip delay | `LITEAVATAR_LIP_DELAY_FRAMES` | `--lip-delay-frames` | 1 | video starts this many frames after its audio |
 | Bitrate | `LITEAVATAR_BITRATE` | `--bitrate` | 2500000 | one video layer, no simulcast |
 | Presenter | `LITEAVATAR_PRESENTER` | `--presenter` | `P1yerb8kIA7eBpaIydU2lwzA` | for sessions that don't ask for one |

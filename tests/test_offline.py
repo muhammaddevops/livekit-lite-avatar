@@ -164,8 +164,8 @@ def test_slow_cpu_keeps_the_voice_smooth(stream, wav):
     print(f"\nslow CPU: {pairs} audio chunks, {drawn} frames drawn, {new} new pictures, {stalls} stalled frames")
     assert stalls == 0, "the voice paused while the renderer was behind"
     assert drawn < 0.8 * pairs, "the renderer should have skipped frames to keep up"
-    # the lips keep moving at about the rate frames can be drawn (~16 a second here), not frozen
-    assert new > 0.4 * pairs, "late frames were drawn and dropped instead of aiming ahead: the face froze"
+    # the lips keep moving at the rate frames can be drawn: nearly every drawn frame is shown, not drawn too late
+    assert new >= 0.8 * drawn, "late frames were drawn and dropped instead of aiming ahead: the face froze"
 
 
 @pytest.mark.parametrize("pace", [1.0, 1.5])
