@@ -30,12 +30,15 @@ dependencies = [
 [project.optional-dependencies]
 # The renderer process (Python 3.10 to 3.12; tested on 3.10). constraints-renderer.txt pins the tested versions.
 renderer = [
+    # the worker builds on livekit-agents internals (AvatarRunner, the data-stream receiver): the tested version
+    "livekit-agents==1.8.11",
     "numpy>=1.24,<2",
     "scipy>=1.11",
     "torch>=2.1,<2.6",
     "torchaudio>=2.1,<2.6",
     "torchvision>=0.16,<0.21",
     "onnxruntime>=1.17",
+    "onnx>=1.16,<1.18",  # to export the face decoder for ONNX Runtime (1.18+ needs protobuf 6)
     "opencv-python-headless>=4.8",
     "librosa>=0.10,<0.11",
     "soundfile>=0.12",

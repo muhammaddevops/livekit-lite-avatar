@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -20,6 +21,8 @@ class FakePool:
         self.warm = asyncio.Queue()
         self.active: set = set()
         self.loading = 0
+        self.pending = 0
+        self.healthy = True
         self.jobs: list[dict] = []
         self.estimate = {"real_time_factor": 0.46, "suggested_fps": 30}
 
@@ -96,3 +99,90 @@ def test_settings_env_flags_and_worker_env(tmp_path):
     worker_env = s2.to_env()
     assert worker_env["LITEAVATAR_FPS"] == "25" and "LITEAVATAR_SECRET" not in worker_env
     assert Settings.from_env(worker_env).fps == 25
+
+
+# ---------- the real pool, with tiny fake workers that speak the worker's line protocol
+
+FAKE_WORKER = """
+import json, sys, time
+mode = sys.argv[1]
+if mode == "dies":
+    sys.exit(3)
+time.sleep(float(sys.argv[2]) if len(sys.argv) > 2 else 0)
+print("READY " + json.dumps({"real_time_factor": 0.5}), flush=True)
+job = json.loads(sys.stdin.readline())
+print("JOINED" if mode == "joins" else "ERROR could not join the room: " + job["url"], flush=True)
+time.sleep(30)
+"""
+
+
+def _pool_app(tmp_path, mode: str, *args: str, **settings):
+    from livekit_lite_avatar.renderer.server import Pool
+
+    script = tmp_path / "fake_worker.py"
+    script.write_text(FAKE_WORKER)
+    s = _settings(tmp_path, refill_delay_s=0.0, **settings)
+    pool = Pool(s, worker_cmd=[sys.executable, str(script), mode, *args])
+    return s, pool
+
+
+async def _wait(cond, timeout=10.0):
+    loop = asyncio.get_running_loop()
+    end = loop.time() + timeout
+    while not cond():
+        assert loop.time() < end, "timed out"
+        await asyncio.sleep(0.05)
+
+
+def test_pool_answers_once_the_worker_has_joined(tmp_path):
+    s, pool = _pool_app(tmp_path, "joins")
+
+    async def fn(client):
+        await _wait(lambda: pool.warm.qsize() == 1)
+        r = await client.post("/sessions", json={"url": "wss://x", "token": "t"})
+        health = await (await client.get("/health")).json()
+        return r.status, health
+
+    status, health = _run(s, pool, fn)
+    assert status == 201
+    assert health["healthy"] and health["active"] == 1 and health["estimate"] == {"real_time_factor": 0.5}
+
+
+def test_pool_reports_a_worker_that_cannot_join(tmp_path):
+    s, pool = _pool_app(tmp_path, "fails")
+
+    async def fn(client):
+        await _wait(lambda: pool.warm.qsize() == 1)
+        r = await client.post("/sessions", json={"url": "wss://nowhere", "token": "t"})
+        body = await r.json()
+        await _wait(lambda: not pool.active)  # the worker that failed is stopped
+        return r.status, body
+
+    status, body = _run(s, pool, fn)
+    assert status == 502 and "could not join the room: wss://nowhere" in body["error"]
+
+
+def test_pool_recovers_and_reports_workers_that_die_while_loading(tmp_path):
+    s, pool = _pool_app(tmp_path, "dies")
+
+    async def fn(client):
+        await _wait(lambda: pool.failures >= 3)  # retried with back-off, not given up
+        r = await client.get("/health")
+        return r.status, await r.json()
+
+    pool.retry_base_s = 0.05
+    status, health = _run(s, pool, fn)
+    assert status == 503 and health["healthy"] is False
+
+
+def test_pool_turns_away_requests_beyond_max_sessions_at_once(tmp_path):
+    s, pool = _pool_app(tmp_path, "joins", "1.0", max_sessions=1)  # a slow-loading worker
+
+    async def fn(client):
+        a, b = await asyncio.gather(
+            client.post("/sessions", json={"url": "wss://x", "token": "t"}),
+            client.post("/sessions", json={"url": "wss://x", "token": "t"}),
+        )
+        return sorted([a.status, b.status])
+
+    assert _run(s, pool, fn) == [201, 503]

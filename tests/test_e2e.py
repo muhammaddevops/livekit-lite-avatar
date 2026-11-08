@@ -72,3 +72,18 @@ def test_real_time(result):
     assert first["start_latency_s"] < 1.0
     assert first["video_fps_while_speaking"] >= SETTINGS.fps * 0.9
     assert first["longest_video_gap_ms"] < 250
+
+
+def test_agent_falls_back_to_voice_when_the_avatar_leaves(tmp_path):
+    """If the avatar leaves mid-call (renderer stopped, time limit), the agent carries on with its own voice."""
+    import run as e2e
+
+    from livekit_lite_avatar.renderer.offline import default_wav
+
+    wav = os.getenv("LITEAVATAR_TEST_WAV") or str(default_wav(SETTINGS))
+    out = e2e.run([wav, wav], remove_avatar_after_first=True, keep_logs=tmp_path)
+    print("\n" + json.dumps(out["speech"], indent=2))
+    first, second = out["speech"]
+    assert first["heard_from"] == "avatar"
+    assert second["heard_from"] == "agent", "the second reply wasn't heard at all"
+    assert abs(second["audible_s"] - second["wav_audible_s"]) < 0.25

@@ -39,6 +39,7 @@ def main() -> None:
 
     s._features = timed("speech features (Paraformer)", s._features)
     s._window_params = timed("audio2mouth", s._window_params)
+    torchscript_decoder = s._av.generator
     s._av.generator = timed("face decoder (net_decode)", s._av.generator)
     s._draw = timed("draw frame (decoder + blend)", s._draw)
     t0 = time.perf_counter()
@@ -56,6 +57,30 @@ def main() -> None:
             f"  {name:32s} {t / secs * 1000:7.1f} ms per second of speech  ({calls[name]} calls, "
             f"{t / calls[name] * 1000:.1f} ms each)"
         )
+    compare_decoders(s, settings, torchscript_decoder)
+
+
+def compare_decoders(s, settings, torchscript_decoder) -> None:
+    """ms per frame for LiteAvatar's TorchScript decoder and the same decoder in ONNX Runtime."""
+    import torch
+
+    from livekit_lite_avatar.renderer.decoder import OnnxDecoder
+
+    refs = s._av.ref_img_list
+    params = torch.from_numpy(s.neutral[None].astype(np.float32))
+    onnx = OnnxDecoder(torchscript_decoder, refs[0], settings.threads)
+    for name, fn in (("torchscript", torchscript_decoder), ("onnxruntime", onnx)):
+        with torch.inference_mode():
+            for i in range(3):
+                fn(refs[i], params)
+            t = time.perf_counter()
+            for i in range(30):
+                out = fn(refs[i % len(refs)], params)
+        print(f"  decoder in {name:12s} {(time.perf_counter() - t) / 30 * 1000:6.1f} ms per frame")
+    with torch.inference_mode():
+        diff = float((onnx(refs[5], params) - torchscript_decoder(refs[5], params)).abs().max())
+    print(f"  max difference between them: {diff:.1e} (output range -1..1)")
+    del out
 
 
 if __name__ == "__main__":

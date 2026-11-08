@@ -1,4 +1,4 @@
-"""Demo agent with no STT, LLM or TTS: it greets you with two recorded lines, then repeats what you say.
+"""Demo agent with no STT, LLM or TTS: it greets you with three recorded lines, then repeats what you say.
 
 Your voice goes through the same path a TTS reply would (session.say -> data stream -> renderer), so you see the
 avatar lip-sync to your own speech. Started by run.py next to it; the greeting was made with Kokoro (Apache-2.0).

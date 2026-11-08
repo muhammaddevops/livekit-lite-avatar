@@ -227,22 +227,31 @@ async def view(stack: Stack, room_name: str, plan: dict, *, record: Path | None,
     room = rtc.Room()
     got: dict = {"video_pubs": [], "audio_pubs": [], "avatar_attributes": None}
     vtimes: list[float] = []
-    asamples: list[tuple[float, np.ndarray]] = []
+    fresh: list[bool] = []  # per video frame: a new picture, or the previous one repeated (the renderer fell behind)
+    asamples: list[tuple[float, np.ndarray]] = []  # audio from the avatar
+    agent_samples: list[tuple[float, np.ndarray]] = []  # audio from the agent itself (after a fall-back to voice)
     report_fut: asyncio.Future = asyncio.get_running_loop().create_future()
     recorder = Recorder(record, plan.get("fps", 25)) if record else None
     tasks: set[asyncio.Task] = set()
 
     async def read_video(track: rtc.RemoteVideoTrack) -> None:
+        prev = None
         async for ev in rtc.VideoStream(track):
             now = time.time()
             vtimes.append(now)
+            # a coarse look at the luma plane: while speaking, the mouth changes some pixels strongly in nearly every
+            # frame; a repeated picture differs from the last by encoder noise only
+            w, h = ev.frame.width, ev.frame.height
+            luma = np.frombuffer(ev.frame.data, np.uint8)[: w * h].reshape(h, w)[::8, ::8].astype(np.int16)
+            fresh.append(prev is None or int(np.abs(luma - prev).max()) > 5)
+            prev = luma
             got["video_size"] = (ev.frame.width, ev.frame.height)
             if recorder:
                 recorder.video(ev.frame, now)
 
-    async def read_audio(track: rtc.RemoteAudioTrack) -> None:
+    async def read_audio(track: rtc.RemoteAudioTrack, into: list) -> None:
         async for ev in rtc.AudioStream(track, sample_rate=VIEW_RATE, num_channels=1):
-            asamples.append((time.time(), np.frombuffer(ev.frame.data, np.int16).copy()))
+            into.append((time.time(), np.frombuffer(ev.frame.data, np.int16).copy()))
 
     @room.on("track_subscribed")
     def _sub(track: rtc.Track, pub: rtc.RemoteTrackPublication, p: rtc.RemoteParticipant) -> None:
@@ -259,7 +268,8 @@ async def view(stack: Stack, room_name: str, plan: dict, *, record: Path | None,
             tasks.add(asyncio.create_task(read_video(track)))
         else:
             got["audio_pubs"].append(info)
-            tasks.add(asyncio.create_task(read_audio(track)))
+            into = asamples if p.identity == AVATAR_IDENTITY else agent_samples
+            tasks.add(asyncio.create_task(read_audio(track, into)))
         if p.identity == AVATAR_IDENTITY:
             got["avatar_attributes"] = dict(p.attributes)
 
@@ -268,7 +278,18 @@ async def view(stack: Stack, room_name: str, plan: dict, *, record: Path | None,
         if "e2e.report" in changed and not report_fut.done():
             report_fut.set_result(json.loads(changed["e2e.report"]))
 
+    async def remove_avatar_after_first_reply() -> None:
+        """Take the avatar out of the room once its first reply has played, as if the renderer had died."""
+        while not (spans := _speech_spans(asamples)) or time.time() - spans[0][1] < 0.6:
+            await asyncio.sleep(0.1)
+        http = stack.lk_url.replace("ws://", "http://")
+        async with api.LiveKitAPI(http, KEY, SECRET) as lk:
+            await lk.room.remove_participant(api.RoomParticipantIdentity(room=room_name, identity=AVATAR_IDENTITY))
+        got["avatar_removed_at"] = time.time()
+
     await room.connect(stack.lk_url, token)
+    if plan.get("remove_avatar_after_first"):
+        tasks.add(asyncio.create_task(remove_avatar_after_first_reply()))
     try:
         agent_report = await asyncio.wait_for(report_fut, timeout=timeout)
         await asyncio.sleep(0.5)
@@ -281,7 +302,7 @@ async def view(stack: Stack, room_name: str, plan: dict, *, record: Path | None,
     audio_start = asamples[0][0] - len(asamples[0][1]) / VIEW_RATE if asamples else None
     if recorder:
         recorder.finish(audio, audio_start)
-    return measure(got, vtimes, asamples, agent_report, plan)
+    return measure(got, vtimes, fresh, asamples, agent_samples, agent_report, plan)
 
 
 def _speech_spans(asamples: list[tuple[float, np.ndarray]], threshold_db: float = -45.0) -> list[tuple[float, float]]:
@@ -314,7 +335,9 @@ def _wav_audible(path: str, threshold_db: float = -45.0) -> tuple[float, float, 
     return len(a) / sr, loud[0] / sr, min(len(a), loud[-1] + n) / sr
 
 
-def measure(got: dict, vtimes: list[float], asamples: list, agent: dict, plan: dict) -> dict:
+def measure(
+    got: dict, vtimes: list[float], fresh: list[bool], asamples: list, agent_samples: list, agent: dict, plan: dict
+) -> dict:
     out: dict = {
         "avatar_attributes": got["avatar_attributes"],
         "agent_identity": agent.get("agent_identity"),
@@ -326,10 +349,16 @@ def measure(got: dict, vtimes: list[float], asamples: list, agent: dict, plan: d
         "speech": [],
     }
     vt = np.asarray(vtimes)
+    vfresh = np.asarray(fresh[: len(vt)], bool)
     spans = _speech_spans(asamples)
+    agent_spans = _speech_spans(agent_samples)
     for i, (item, rep) in enumerate(zip(plan["speech"], agent["speech"], strict=True)):
         said, done = rep["said_at"], rep["playout_done_at"]
         mine = [s for s in spans if said <= s[0] <= done + 1.0]
+        heard_from = "avatar"
+        if not mine:  # the agent fell back to its own voice
+            mine = [s for s in agent_spans if said <= s[0] <= done + 1.0]
+            heard_from = "agent" if mine else None
         dur, lead, last = _wav_audible(item["wav"])
         entry = {
             "wav": rep["wav"],
@@ -337,15 +366,19 @@ def measure(got: dict, vtimes: list[float], asamples: list, agent: dict, plan: d
             "wav_audible_s": round(last - lead, 2),
             "interrupted": rep["interrupted"],
             "agent_playout_s": round(done - said, 2),
+            "heard_from": heard_from,
         }
         if mine:
             start, end = mine[0][0], max(e for _, e in mine)
             # from say() until the first sound reaches the viewer, not counting the WAV's own leading silence
             entry["start_latency_s"] = round(start - said - lead, 2)
             entry["audible_s"] = round(end - start, 2)
-            window = vt[(vt >= start) & (vt <= end)]
+            inside = (vt >= start) & (vt <= end)
+            window = vt[inside]
             if len(window) > 1:
                 entry["video_fps_while_speaking"] = round((len(window) - 1) / (window[-1] - window[0]), 1)
+                # new pictures per second: below the frame rate when the renderer repeats frames to keep up
+                entry["lip_fps_while_speaking"] = round(int(vfresh[inside].sum()) / (window[-1] - window[0]), 1)
                 gaps = np.diff(window)
                 entry["longest_video_gap_ms"] = round(float(gaps.max()) * 1000)
             if rep.get("interrupted_at"):
@@ -364,6 +397,7 @@ def run(
     presenter: str | None = None,
     interrupt_after: float | None = None,
     record: Path | None = None,
+    remove_avatar_after_first: bool = False,
     renderer_env: dict | None = None,
     timeout: float = 300,
     keep_logs: Path | None = None,
@@ -373,6 +407,9 @@ def run(
     plan = {"presenter": presenter, "speech": [{"wav": str(Path(w).resolve())} for w in wavs]}
     if interrupt_after:
         plan["speech"][-1]["interrupt_after_s"] = interrupt_after
+    if remove_avatar_after_first:
+        plan["remove_avatar_after_first"] = True
+        plan["gap_s"] = 3.0  # time for the avatar to be removed between the replies
     stack = Stack(logs)
     try:
         stack.start_livekit()

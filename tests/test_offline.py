@@ -55,7 +55,7 @@ def test_offline_render(stream, wav, tmp_path):
         assert result.real_time_factor < 1.0, "this CPU renders slower than real time"
 
 
-def _play_reply(stream, wav, extra_draw_s: float = 0.0):
+def _play_reply(stream, wav, extra_draw_s: float = 0.0, feed_pace: float = 0.0):
     """Feed a WAV to the worker's generator like TTS, play its output at real-time pace like AVSynchronizer.
 
     Returns the source audio, the (kind, n) sequence of what came out, the audio played and how many frames were
@@ -82,10 +82,12 @@ def _play_reply(stream, wav, extra_draw_s: float = 0.0):
     stream.draw = draw
 
     async def go():
-        async def feed():  # TTS-like: 20 ms frames, faster than real time
+        async def feed():  # TTS-like: 20 ms frames, as fast as possible or at feed_pace x real time
             for i in range(0, len(pcm), 480):
                 chunk = pcm[i : i + 480]
                 await gen.push_audio(rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, len(chunk)))
+                if feed_pace:
+                    await asyncio.sleep(0.02 / feed_pace)
             await gen.push_audio(AudioSegmentEnd())
 
         feeder = asyncio.create_task(feed())
@@ -152,3 +154,68 @@ def test_slow_cpu_keeps_the_voice_smooth(stream, wav):
     print(f"\nslow CPU: {pairs} audio chunks, {drawn} frames drawn, {stalls} stalled frames")
     assert stalls == 0, "the voice paused while the renderer was behind"
     assert drawn < 0.8 * pairs, "the renderer should have skipped frames to keep up"
+
+
+@pytest.mark.parametrize("pace", [1.0, 1.5])
+def test_tts_at_real_time_pace(stream, wav, pace):
+    """TTS that streams only as fast as speech (or a little faster): the voice never pauses, and on a fast enough
+    CPU the lips don't skip either."""
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE
+
+    spf = SAMPLE_RATE // stream.out_fps
+    pcm, seq, played, drawn = _play_reply(stream, wav, feed_pace=pace)
+    pairs, stalls = _check_reply(pcm, seq, played, spf)
+    print(f"\nTTS at {pace}x real time: {pairs} audio chunks, {drawn} drawn, {stalls} stalled frames")
+    assert stalls == 0, "the voice paused"
+    if PERF:
+        assert drawn >= pairs - SETTINGS.lip_delay_frames - 3, "frames were skipped although the CPU keeps up"
+
+
+def test_reply_after_an_interruption_plays_in_full(stream, wav):
+    """Interrupt a reply while the producer is idle, then send the next: none of the next reply may be lost."""
+    import librosa
+    import numpy as np
+    from livekit import rtc
+    from livekit.agents.voice.avatar import AudioSegmentEnd
+
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE, LiteAvatarGenerator
+
+    audio, _ = librosa.load(wav, sr=SAMPLE_RATE, mono=True)
+    pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+    stream.reset()
+    gen = LiteAvatarGenerator(stream, lip_delay_frames=SETTINGS.lip_delay_frames)
+
+    async def go():
+        async def feed(n_samples: int, end: bool) -> None:
+            for i in range(0, n_samples, 480):
+                chunk = pcm[i : min(i + 480, n_samples)]
+                await gen.push_audio(rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, len(chunk)))
+            if end:
+                await gen.push_audio(AudioSegmentEnd())
+
+        player = gen.__aiter__()
+        await feed(len(pcm) // 2, end=False)  # first reply: half of it, then the user barges in
+        played_first = 0
+        while played_first < 40:  # let ~1.6 s play, so the producer has caught up and is waiting for audio
+            item = await player.__anext__()
+            if isinstance(item, rtc.AudioFrame):
+                played_first += 1
+            else:
+                await asyncio.sleep(1 / stream.out_fps)
+        await asyncio.sleep(0.5)
+        await gen.clear_buffer()  # the interruption
+        await feed(len(pcm), end=True)  # the next reply, in full
+        out = []
+        while True:
+            item = await player.__anext__()
+            if isinstance(item, AudioSegmentEnd):
+                break
+            if isinstance(item, rtc.AudioFrame):
+                out.append(np.frombuffer(item.data, np.int16))
+            else:
+                await asyncio.sleep(1 / stream.out_fps)
+        await gen.aclose()
+        return np.concatenate(out)
+
+    second = asyncio.run(asyncio.wait_for(go(), timeout=90))
+    assert np.array_equal(second[: len(pcm)], pcm), "the reply after the interruption lost audio"

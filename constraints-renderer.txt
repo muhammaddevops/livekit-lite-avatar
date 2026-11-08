@@ -67,6 +67,7 @@ nest-asyncio==1.6.0
 networkx==3.4.2
 numba==0.68.1
 numpy==1.26.4
+onnx==1.17.0
 onnxruntime==1.23.2
 openai==3.46.0
 opencv-python-headless==4.11.0.86

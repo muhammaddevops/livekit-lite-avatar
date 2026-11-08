@@ -43,6 +43,7 @@ class Settings:
     open_gain: float = 1.0  # scales only the jaw-opening direction; 1.8 opens the mouth wider cleanly
     smooth_hz: float = 10.0  # low-pass on the mouth parameters (LiteAvatar's own value)
     head_motion: float = 0.0  # gentle sway and nods by moving the whole frame; softens the picture
+    decoder: str = "torch"  # face decoder: LiteAvatar's TorchScript ("torch") or the same network in ONNX Runtime
 
     # ---------- paths
     @property
@@ -80,7 +81,8 @@ class Settings:
         return replace(self, **changes)
 
     def to_env(self) -> dict[str, str]:
-        """The settings a worker needs, as LITEAVATAR_* variables (the secret stays with the server)."""
+        """The settings a worker needs, as LITEAVATAR_* variables. The secret is left out, and the server also removes
+        it from the environment it passes on: workers don't need it."""
         return {f"LITEAVATAR_{f.name.upper()}": str(getattr(self, f.name)) for f in fields(self) if f.name != "secret"}
 
 
@@ -119,6 +121,7 @@ _FLAGS = {
     "open_gain": (float, "scale the jaw opening only (LITEAVATAR_OPEN_GAIN, 1.0)"),
     "smooth_hz": (float, "mouth smoothing cut-off in Hz (LITEAVATAR_SMOOTH_HZ, 10)"),
     "head_motion": (float, "head sway amount, 0 = off (LITEAVATAR_HEAD_MOTION, 0)"),
+    "decoder": (str, "face decoder: torch or onnx (LITEAVATAR_DECODER, torch)"),
 }
 
 

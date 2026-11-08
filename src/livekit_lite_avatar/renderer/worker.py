@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import cv2
@@ -41,7 +43,7 @@ SAMPLE_RATE = 24000  # the agent side sends 24 kHz mono
 _END = object()
 LEAD_FRAMES = 8  # about the time to the first drawn frame of a reply
 DRAW_BATCH = 6  # frames drawn per hand-over
-FIRST_BATCH = 2  # a reply's first hand-over is smaller, so it starts sooner (drawing is ~3x faster than playback)
+FIRST_BATCH = 2  # each window's first hand-over is smaller, so it is ready sooner (drawing is faster than playback)
 CATCH_UP = 2  # when behind, skip this many frames beyond those already played, so the next drawn one is on time
 
 
@@ -59,6 +61,13 @@ class CrispAvatarRunner(AvatarRunner):
         self._fps = fps
 
     async def _publish_track(self) -> None:
+        try:
+            await self._publish_one_layer()
+        except AttributeError:  # AvatarRunner's private attributes changed: use LiveKit's own (simulcast) publishing
+            logger.warning("this livekit-agents version changed AvatarRunner; publishing with simulcast")
+            await super()._publish_track()
+
+    async def _publish_one_layer(self) -> None:
         async with self._lock:
             await self._room_connected_fut
             audio_track = rtc.LocalAudioTrack.create_audio_track("avatar_audio", self._audio_source)
@@ -92,6 +101,7 @@ class ResilientAudioReceiver(AudioReceiver):
         self._room = room
         self._sender = sender_identity
         self._inner: DataStreamAudioReceiver | None = None
+        self._pending: list[tuple[str, tuple]] = []  # notifications that arrived while restarting
 
     async def _renew(self) -> None:
         if self._inner is not None:
@@ -103,22 +113,28 @@ class ResilientAudioReceiver(AudioReceiver):
         self._inner = DataStreamAudioReceiver(self._room, sender_identity=self._sender)
         self._inner.on("clear_buffer", lambda *_: self.emit("clear_buffer"))
         await self._inner.start()
+        pending, self._pending = self._pending, []
+        for name, args in pending:  # tell the agent what it missed, or it waits for playback to finish forever
+            result = self._notify(name, *args)
+            if asyncio.iscoroutine(result):
+                await result
 
     async def start(self) -> None:
         await self._renew()
 
-    def _notify(self, fn, *args):
+    def _notify(self, name: str, *args):
         try:
-            return fn(*args)
+            return getattr(self._inner, name)(*args)
         except ChanClosed:
-            logger.warning("playback notification dropped (receiver restarting)")
+            logger.info("receiver restarting; %s will be sent once it is back", name)
+            self._pending.append((name, args))
             return None
 
     def notify_playback_finished(self, playback_position: float, interrupted: bool):
-        return self._notify(self._inner.notify_playback_finished, playback_position, interrupted)
+        return self._notify("notify_playback_finished", playback_position, interrupted)
 
     def notify_playback_started(self):
-        return self._notify(self._inner.notify_playback_started)
+        return self._notify("notify_playback_started")
 
     def __aiter__(self):
         return self._frames()
@@ -211,6 +227,7 @@ class _Reply:
     """One reply's audio as it arrives (24 kHz int16), shared by the producer and the player."""
 
     audio: np.ndarray
+    ended: bool = False  # all of the reply's audio has arrived
     skipped: int = 0  # frames not drawn because their audio had already played
 
 
@@ -279,8 +296,10 @@ class LiteAvatarGenerator(VideoGenerator):
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("renderer error; resetting")
+                logger.exception("renderer error; ending this reply")
                 await self.clear_buffer()
+                # tell AvatarRunner the reply is over, so the agent hears playback finished instead of waiting
+                await self._out.put((self._epoch, None, 0, _END))
                 await asyncio.sleep(0.2)
 
     async def _produce_loop(self) -> None:
@@ -308,10 +327,13 @@ class LiteAvatarGenerator(VideoGenerator):
             # wait for audio unless there is buffered work to do
             if not self._s.ready(ended) and not (ended and len(reply.audio)):
                 ep, item = await self._in.get()
-                if ep != self._epoch:
+                if epoch != self._epoch:  # interrupted while waiting: this item may belong to the next reply
+                    epoch = self._epoch
+                    reset()
+                if ep != epoch:
                     continue
                 if isinstance(item, AudioSegmentEnd):
-                    ended = True
+                    ended = reply.ended = True
                     if not len(reply.audio):
                         await put(_END, 0)
                         reset()
@@ -323,7 +345,7 @@ class LiteAvatarGenerator(VideoGenerator):
                     if ep != self._epoch:
                         continue
                     if isinstance(item, AudioSegmentEnd):
-                        ended = True
+                        ended = reply.ended = True
                         break
                     parts.append(self._pcm(item))
                 new_pcm = np.concatenate(parts)
@@ -353,7 +375,7 @@ class LiteAvatarGenerator(VideoGenerator):
                     emitted += n
                     j += n
                     continue
-                batch = rows[j : j + (DRAW_BATCH if t_first else FIRST_BATCH)]
+                batch = rows[j : j + (FIRST_BATCH if j == 0 else DRAW_BATCH)]  # each window's first frames early
                 k0 = self._s.k_next
                 frames = await asyncio.to_thread(self._s.draw, batch)
                 if epoch != self._epoch:
@@ -400,7 +422,14 @@ class LiteAvatarGenerator(VideoGenerator):
                 ep, reply, i, payload = self._out.get_nowait()
             except asyncio.QueueEmpty:
                 cur = self._playing
-                if cur is not None and last is not None and self._played * self._spf < len(cur.audio):
+                # whole chunks only while audio is still arriving (a partial one would be padded with silence and
+                # the rest of it skipped); the reply's last chunk once it has all arrived
+                if cur is not None and last is not None:
+                    whole = (self._played + 1) * self._spf <= len(cur.audio)
+                    last_bit = cur.ended and self._played * self._spf < len(cur.audio)
+                else:
+                    whole = last_bit = False
+                if whole or last_bit:
                     # the next frame isn't drawn yet: keep the voice going on the last picture
                     yield self._vf(last)
                     if epoch == self._epoch and self._playing is cur:
@@ -445,13 +474,24 @@ class LiteAvatarGenerator(VideoGenerator):
             self._producer.cancel()
 
 
-async def run_session(url: str, token: str, stream: LiteAvatarStream, settings: Settings) -> None:
+async def run_session(
+    url: str, token: str, stream: LiteAvatarStream, settings: Settings, report: Callable[[str], None] = print
+) -> None:
+    """Join the room and be the avatar until the agent leaves, the room closes or the time limit passes.
+    report("JOINED") once in the room, or report("ERROR ...") if joining fails: the server waits for one of them
+    before it tells the agent the session is accepted."""
     room = rtc.Room()
     done = asyncio.Event()
     room.on("disconnected", lambda *_: done.set())
-    await room.connect(url, token)
+    try:
+        # the avatar only publishes; it has no use for anyone's tracks
+        await asyncio.wait_for(room.connect(url, token, rtc.RoomOptions(auto_subscribe=False)), timeout=20)
+    except Exception as e:  # noqa: BLE001 - reported to the server, which tells the agent
+        report(f"ERROR could not join the room: {e!r}")
+        return
     owner = room.local_participant.attributes.get("lk.publish_on_behalf")
     logger.info("joined %s as %s (for %s)", room.name, room.local_participant.identity, owner)
+    report("JOINED")
 
     @room.on("participant_disconnected")
     def _left(p: rtc.RemoteParticipant) -> None:
@@ -474,11 +514,11 @@ async def run_session(url: str, token: str, stream: LiteAvatarStream, settings: 
         fps=stream.out_fps,
     )
     gen.av_sync = runner.av_sync
-    await runner.start()
     try:
+        await asyncio.wait_for(runner.start(), timeout=60)  # waits for the agent; it may already have gone
         await asyncio.wait_for(done.wait(), timeout=settings.max_session_s)
     except asyncio.TimeoutError:
-        logger.info("session time limit reached")
+        logger.info("leaving: the agent never arrived or the session time limit was reached")
     finally:
         await runner.aclose()
         await gen.aclose()
@@ -518,9 +558,18 @@ def main(
     settings: Settings, *, warm: bool, url: str | None = None, token: str | None = None, presenter: str | None = None
 ) -> None:
     stream, est = load(settings)
+    report = print
     if warm:
-        print("READY " + json.dumps(est), flush=True)  # the server reads this line
-        sys.stdout = sys.stderr  # nobody reads our stdout after READY
+        # stdout is the line protocol with the server (READY, then JOINED or ERROR). Keep a private copy of it and
+        # point fd 1 at stderr, so nothing else (LiteAvatar's prints, native libraries) can write into the pipe.
+        proto = os.fdopen(os.dup(1), "w", buffering=1)
+        os.dup2(2, 1)
+        sys.stdout = sys.stderr
+
+        def report(line: str) -> None:
+            proto.write(line.replace("\n", " ") + "\n")
+
+        report("READY " + json.dumps(est))
         line = sys.stdin.readline()
         if not line.strip():  # the server went away before handing us a session
             return
@@ -530,6 +579,10 @@ def main(
         raise SystemExit("worker needs --url and --token (or --warm)")
     if presenter and presenter != settings.presenter:
         t = time.perf_counter()
-        stream.load_presenter(settings.presenter_dir(presenter))
+        try:
+            stream.load_presenter(settings.presenter_dir(presenter))
+        except Exception as e:  # noqa: BLE001 - reported to the server, which tells the agent
+            report(f"ERROR could not load presenter {presenter}: {e!r}")
+            return
         logger.info("switched to presenter %s in %.1fs", presenter, time.perf_counter() - t)
-    asyncio.run(run_session(url, token, stream, settings))
+    asyncio.run(run_session(url, token, stream, settings, report))

@@ -11,8 +11,9 @@ per frame, then draws every frame. Here the same models run on a growing audio b
   * the 30 fps parameters are resampled to the output frame rate on one continuous timeline;
   * each parameter frame is drawn by the presenter's decoder and blended into the presenter's idle video.
 
-Measured on an Apple M4 Pro CPU: features 0.13 s per window, audio2mouth 26 ms, drawing 14 ms per frame, so 0.8 s
-of speech takes about 0.5 s. Everything here is synchronous; call it from a worker thread.
+Measured on an Apple M4 Pro CPU (scripts/profile_renderer.py), per second of speech: speech features 120 ms,
+audio2mouth 10 ms, the face decoder 280 ms (11 ms a frame at 25 fps), so a second of speech takes about 0.45 s.
+Everything here is synchronous; call it from a worker thread.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ FADE = WIN - HOP
 LOOKAHEAD = 15  # frames of extra audio wanted before a window is processed (0.5 s)
 LEFT_CTX = 30  # frames of audio before the window given to the feature encoder (1 s)
 HIST = 30  # committed frames kept for smoothing
+START_MARGIN = 3  # extra frames of audio a reply's first window waits for (0.1 s)
 # Top principal components of audio2mouth's output on English and Arabic test speech. The first (70% of the
 # variance) is the jaw opening; `open_gain` scales only that direction.
 _MOUTH_PCS = Path(__file__).with_name("mouth_pcs.npy")
@@ -80,6 +82,7 @@ class LiteAvatarStream:
         open_gain: float = 1.0,
         smooth_hz: float = 10.0,
         head_motion: float = 0.0,
+        decoder: str = "torch",
     ) -> None:
         import torch
         from loguru import logger as loguru_logger
@@ -95,6 +98,8 @@ class LiteAvatarStream:
         self.mouth_gain = mouth_gain
         self.open_gain = open_gain
         self.head_motion = head_motion
+        self.decoder = decoder
+        self._threads = threads
         self._av, self._extract = _load_liteavatar(Path(lite_avatar_dir).resolve())
         self._a2m = self._av.audio2mouth
         self._b, self._a = signal.butter(4, 2 * min(smooth_hz, 14.5) / FPS, "lowpass")
@@ -125,6 +130,16 @@ class LiteAvatarStream:
         self._box = tuple(round(v * self.scale) for v in (av.y1, av.y2, av.x1, av.x2))
         y1, y2, x1, x2 = self._box
         self._mask = cv2.resize(av.merge_mask.astype(np.float32), (x2 - x1, y2 - y1))
+        self._decode = av.generator  # LiteAvatar's TorchScript decoder, or the same network in ONNX Runtime
+        if self.decoder == "onnx":
+            try:
+                from .decoder import OnnxDecoder
+
+                self._decode = OnnxDecoder(av.generator, av.ref_img_list[0], self._threads)
+            except Exception as e:  # noqa: BLE001 - fall back rather than fail to start
+                import logging
+
+                logging.getLogger("liteavatar.stream").warning("ONNX decoder unavailable (%s); using TorchScript", e)
 
     # ---------- presenter background: frame k of an endless ping-pong through the idle video
     def _pp(self, k: int) -> int:
@@ -173,7 +188,7 @@ class LiteAvatarStream:
     def _draw(self, params: np.ndarray) -> np.ndarray:
         i = self._pp(self.k_next)  # the caller sets k_next so speech continues the idle motion
         self.k_next += 1
-        out = self._av.generator(self._av.ref_img_list[i], self.torch.from_numpy(params[None].astype(np.float32)))
+        out = self._decode(self._av.ref_img_list[i], self.torch.from_numpy(params[None].astype(np.float32)))
         mouth = ((out[0].permute(1, 2, 0).numpy() / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)[:, :, ::-1]
         y1, y2, x1, x2 = self._box
         mouth = cv2.resize(mouth, (x2 - x1, y2 - y1), interpolation=cv2.INTER_AREA)
@@ -203,8 +218,10 @@ class LiteAvatarStream:
         n = self._frames_avail()
         if final:
             return self.done < n
-        need = WIN + (LOOKAHEAD if self.done else 5)  # be quicker on the very first window
-        return self.done + need <= n
+        # The first window waits for the same lookahead as the rest, plus a small margin: when the TTS streams at
+        # about real-time pace, starting any sooner would make every later window late and frames be skipped.
+        # TTS that runs ahead of real time (most do) fills this at once, so it costs nothing there.
+        return self.done + WIN + LOOKAHEAD + (0 if self.done else START_MARGIN) <= n
 
     def _features(self, c0: int, c1: int) -> np.ndarray:
         """Paraformer features for frames [c0, c1), one row per 30 fps frame."""
@@ -390,4 +407,5 @@ def from_settings(settings, presenter: str | None = None) -> LiteAvatarStream:
         open_gain=settings.open_gain,
         smooth_hz=settings.smooth_hz,
         head_motion=settings.head_motion,
+        decoder=settings.decoder,
     )

@@ -3,7 +3,8 @@
 Nothing from LiteAvatar is shipped with this package. `liteavatar-renderer setup` fetches:
   * the LiteAvatar code from GitHub (HumanAIGC/lite-avatar, MIT), at the commit this package was tested with;
   * three weight files from ModelScope (HumanAIGC-Engineering/LiteAvatarGallery), checked against known SHA-256s;
-  * one or more presenters from the same ModelScope gallery, or "sample" (the sample presenter in LiteAvatar's repo).
+  * one or more presenters from the same ModelScope gallery (the default one checked against a known SHA-256), or
+    "sample" (the sample presenter in LiteAvatar's repository).
 
 About 1.3 GB in total. See the README's licence section before using the weights or presenters commercially.
 """
@@ -46,6 +47,10 @@ WEIGHTS = [  # (path inside the LiteAvatar checkout, path on ModelScope, size in
     ),
 ]
 SAMPLE_PRESENTER = "sample"
+# known SHA-256 of gallery presenters (their zips hold TorchScript models, which torch.jit.load runs)
+PRESENTER_SHA256 = {
+    ("20250408", "P1yerb8kIA7eBpaIydU2lwzA"): "7c07254d618c9dd5df807fcb577571b220e78a06321be4c9bc62135db6fb960f",
+}
 _UA = {"User-Agent": "livekit-lite-avatar-setup"}
 
 
@@ -143,7 +148,7 @@ def _install_presenter_zip(zip_path: Path, dest: Path) -> None:
         shutil.move(str(found[0].parent), str(dest))
 
 
-def fetch_presenter(settings: Settings, presenter: str, gallery: str = DEFAULT_GALLERY) -> Path:
+def fetch_presenter(settings: Settings, presenter: str, gallery: str = DEFAULT_GALLERY, verify: bool = True) -> Path:
     if not valid_presenter_id(presenter):
         raise SystemExit(f"invalid presenter id: {presenter!r}")
     dest = settings.presenter_dir(presenter)
@@ -162,6 +167,14 @@ def fetch_presenter(settings: Settings, presenter: str, gallery: str = DEFAULT_G
         zip_path = Path(tmp) / f"{presenter}.zip"
         _say(f"presenter {presenter}: downloading from LiteAvatarGallery {gallery}")
         _download(f"{MODELSCOPE}/{gallery}/{presenter}.zip", zip_path)
+        known = PRESENTER_SHA256.get((gallery, presenter))
+        if known and verify and _sha256(zip_path) != known:
+            raise SystemExit(
+                f"presenter {presenter}: SHA-256 does not match the tested download; rerun with "
+                "--no-verify to accept it at your own risk"
+            )
+        if not known:
+            _say(f"presenter {presenter}: no known checksum, installed as downloaded (over HTTPS)")
         _install_presenter_zip(zip_path, dest)
     return dest
 
@@ -177,7 +190,7 @@ def setup(
         fetch_code(settings)
         fetch_weights(settings, verify=verify)
     for p in presenters:
-        fetch_presenter(settings, p, gallery)
+        fetch_presenter(settings, p, gallery, verify=verify)
     _say(f"Done. Data folder: {settings.home}")
     _say(f"Installed presenters: {', '.join(settings.installed_presenters()) or 'none'}")
 

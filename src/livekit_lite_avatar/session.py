@@ -56,6 +56,8 @@ class LiteAvatarSession(AvatarSession):
         self._identity = avatar_participant_identity
         self._name = avatar_participant_name
         self._timeout = request_timeout
+        self._audio_out: DataStreamAudioOutput | None = None
+        self._closing = False
 
     @property
     def avatar_identity(self) -> str:
@@ -76,8 +78,9 @@ class LiteAvatarSession(AvatarSession):
     ) -> None:
         """Ask the renderer to join `room` and route the agent's audio to it.
 
-        Raises LiteAvatarError if the renderer is unreachable or refuses; the agent's audio is only re-routed once
-        the renderer has accepted, so on failure the agent can carry on voice-only.
+        Raises LiteAvatarError if the renderer is unreachable, refuses, or can't join the room. The agent's audio is
+        only re-routed once the avatar is in the room, so on failure the agent can carry on voice-only. If the
+        avatar leaves later (renderer stopped, session time limit), the agent falls back to its own voice.
         """
         livekit_url = livekit_url or os.getenv("LIVEKIT_URL")
         livekit_api_key = livekit_api_key or os.getenv("LIVEKIT_API_KEY")
@@ -87,27 +90,65 @@ class LiteAvatarSession(AvatarSession):
                 "livekit_url, livekit_api_key and livekit_api_secret must be given as arguments "
                 "or LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET"
             )
-        await super().start(agent_session, room)
         job_ctx = get_job_context()
-        token = self.mint_token(
-            room_name=room.name or job_ctx.job.room.name,
-            publish_on_behalf=job_ctx.local_participant_identity,
-            api_key=livekit_api_key,
-            api_secret=livekit_api_secret,
-        )
-        await self.request_renderer(livekit_url, token)
-        agent_session.output.replace_audio_tail(
-            DataStreamAudioOutput(
-                room=room,
-                destination_identity=self._identity,
-                wait_remote_track=rtc.TrackKind.KIND_VIDEO,  # buffer audio until the face is published
-                sample_rate=SAMPLE_RATE,
-                # the renderer reports when each reply really starts playing, so the agent's speaking state,
-                # transcription timing and playback-latency metrics follow the avatar, not the audio upload
-                wait_playback_start=True,
+        await super().start(agent_session, room)
+        try:
+            token = self.mint_token(
+                room_name=room.name or job_ctx.job.room.name,
+                publish_on_behalf=job_ctx.local_participant_identity,
+                api_key=livekit_api_key,
+                api_secret=livekit_api_secret,
             )
+            await self.request_renderer(livekit_url, token)
+        except BaseException:
+            await self.aclose()  # undo super().start(): metrics listener, join wait, shutdown callback
+            raise
+        self._audio_out = DataStreamAudioOutput(
+            room=room,
+            destination_identity=self._identity,
+            wait_remote_track=rtc.TrackKind.KIND_VIDEO,  # buffer audio until the face is published
+            sample_rate=SAMPLE_RATE,
+            # the renderer reports when each reply really starts playing, so the agent's speaking state,
+            # transcription timing and playback-latency metrics follow the avatar, not the audio upload
+            wait_playback_start=True,
         )
+        agent_session.output.replace_audio_tail(self._audio_out)
+        room.on("participant_disconnected", self._on_participant_disconnected)
         logger.info("liteavatar renderer accepted the session", extra={"renderer": self._renderer_url})
+
+    def _on_participant_disconnected(self, participant: rtc.RemoteParticipant) -> None:
+        if participant.identity != self._identity or self._closing:
+            return
+        logger.error("the avatar left the room unexpectedly; the agent carries on with its own voice")
+        task = asyncio.create_task(self._fall_back_to_voice())
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    async def _fall_back_to_voice(self) -> None:
+        """Publish the agent's audio from the agent again, as if there had never been an avatar."""
+        if self._audio_out is not None:
+            self._audio_out.clear_buffer()  # release anything waiting for the avatar to finish playing
+        if self._room is None or self._agent_session is None:
+            return
+        try:
+            # RoomIO's own audio output; not part of livekit-agents' public API, hence the guard
+            from livekit.agents.voice.room_io import _ParticipantAudioOutput
+
+            out = _ParticipantAudioOutput(
+                self._room,
+                sample_rate=SAMPLE_RATE,
+                num_channels=1,
+                track_publish_options=rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
+            )
+            await out.start()
+            self._agent_session.output.replace_audio_tail(out)
+        except Exception:
+            logger.exception("could not fall back to voice; the agent is silent until the session ends")
+
+    async def aclose(self) -> None:
+        self._closing = True  # our own removal of the avatar is not a reason to fall back
+        if self._room is not None:
+            self._room.off("participant_disconnected", self._on_participant_disconnected)
+        await super().aclose()
 
     def mint_token(self, *, room_name: str, publish_on_behalf: str, api_key: str, api_secret: str) -> str:
         """A LiveKit token for the avatar participant, allowed to publish on behalf of the agent."""
@@ -116,7 +157,8 @@ class LiteAvatarSession(AvatarSession):
             .with_kind("agent")
             .with_identity(self._identity)
             .with_name(self._name)
-            .with_grants(api.VideoGrants(room_join=True, room=room_name))
+            # the avatar only publishes (on the agent's behalf); it has no need to subscribe to anyone
+            .with_grants(api.VideoGrants(room_join=True, room=room_name, can_subscribe=False))
             .with_attributes({ATTRIBUTE_PUBLISH_ON_BEHALF: publish_on_behalf})
             .to_jwt()
         )
