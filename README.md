@@ -53,7 +53,7 @@ You need Python 3.10, git, ffmpeg (for the offline test's MP4) and about 1.3 GB 
 ### 1. The renderer
 
 ```bash
-git clone <this repo> livekit-liteavatar && cd livekit-liteavatar
+git clone https://github.com/muhammaddevops/livekit-lite-avatar.git && cd livekit-lite-avatar
 scripts/setup-renderer.sh
 ```
 
@@ -85,7 +85,7 @@ time), so the first session doesn't wait for models. `GET /health` shows how man
 In your agent's environment (any Python 3.10+; it doesn't need torch):
 
 ```bash
-pip install /path/to/livekit-liteavatar
+pip install "livekit-liteavatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git"
 ```
 
 ```python

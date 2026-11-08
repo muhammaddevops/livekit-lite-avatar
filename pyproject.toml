@@ -57,6 +57,11 @@ renderer = [
 ]
 dev = ["pytest>=8"]
 
+[project.urls]
+Homepage = "https://github.com/muhammaddevops/livekit-lite-avatar"
+Repository = "https://github.com/muhammaddevops/livekit-lite-avatar"
+Issues = "https://github.com/muhammaddevops/livekit-lite-avatar/issues"
+
 [project.scripts]
 liteavatar-renderer = "livekit_liteavatar.renderer.__main__:main"
 
