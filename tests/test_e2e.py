@@ -63,7 +63,8 @@ def test_full_reply_plays_and_the_agent_hears_it_finish(result):
 def test_interruption_stops_the_avatar(result):
     second = result["speech"][1]
     assert second["interrupted"] is True
-    assert second["audio_stopped_after_interrupt_s"] < 0.6
+    # within 0.6 s normally; a machine already far behind real time (LITEAVATAR_PERF_CHECKS=0) gets 3 s
+    assert second["audio_stopped_after_interrupt_s"] < (0.6 if PERF else 3.0)
 
 
 @pytest.mark.skipif(not PERF, reason="LITEAVATAR_PERF_CHECKS=0")

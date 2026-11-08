@@ -93,7 +93,14 @@ jobs:
         env:
           LITEAVATAR_PERF_CHECKS: "0"  # small shared runners are slower than real time: check behaviour here,
                                        # and report the timing in the benchmark below
-        run: .venv/bin/pytest -p no:warnings -rA tests/
+        run: .venv/bin/pytest -p no:warnings -rA --basetemp="$RUNNER_TEMP/pytest" tests/
+      - name: Keep the process logs of failed live tests
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/pytest/**/*.log
+          if-no-files-found: ignore
       - name: Offline tests with LiteAvatar's own TorchScript face decoder
         env:
           LITEAVATAR_PERF_CHECKS: "0"
