@@ -256,6 +256,8 @@ class LiteAvatarGenerator(VideoGenerator):
         self._playing: _Reply | None = None  # the reply being played, and how many of its frames have played
         self._played = 0
         self._frame_s = 0.5 / stream.out_fps  # recent time to draw one frame, for aiming ahead when behind
+        self._reply_open = False  # the producer has a reply's audio but not yet its end
+        self._drop_until_end = False  # after a renderer error: drop the rest of that reply, then end it
         self.av_sync: rtc.AVSynchronizer | None = None
 
     async def push_audio(self, frame: rtc.AudioFrame | AudioSegmentEnd) -> None:
@@ -265,6 +267,7 @@ class LiteAvatarGenerator(VideoGenerator):
         """Drop the current reply at once (an interruption); AvatarRunner awaits this."""
         self._epoch += 1
         self._playing = None
+        self._reply_open = self._drop_until_end = False
         for q in (self._in, self._out):
             while not q.empty():
                 q.get_nowait()
@@ -300,12 +303,17 @@ class LiteAvatarGenerator(VideoGenerator):
                 raise
             except Exception:
                 logger.exception("renderer error; ending this reply")
+                reply_open = self._reply_open
                 await self.clear_buffer()
-                # tell AvatarRunner the reply is over, so the agent hears playback finished instead of waiting
-                await self._out.put((self._epoch, None, 0, _END))
+                if reply_open:  # the rest of this reply is still arriving: drop it, then end the reply once
+                    self._drop_until_end = True
+                else:  # tell AvatarRunner the reply is over, so the agent hears playback finished
+                    await self._out.put((self._epoch, None, 0, _END))
                 await asyncio.sleep(0.2)
 
     async def _produce_loop(self) -> None:
+        self._s.reset()  # start clean, also after a renderer error
+        self._rs.reset()
         epoch = self._epoch
         buf = _Buffer(np.int16)
         reply = _Reply(buf.view())  # this reply's audio, as received (24 kHz)
@@ -335,7 +343,13 @@ class LiteAvatarGenerator(VideoGenerator):
                     reset()
                 if ep != epoch:
                     continue
+                if self._drop_until_end:  # what is left of a reply the renderer failed on
+                    if isinstance(item, AudioSegmentEnd):
+                        self._drop_until_end = False
+                        await put(_END, 0)
+                    continue
                 if isinstance(item, AudioSegmentEnd):
+                    self._reply_open = False
                     ended = reply.ended = True
                     if not len(reply.audio):
                         await put(_END, 0)
@@ -348,12 +362,14 @@ class LiteAvatarGenerator(VideoGenerator):
                     if ep != self._epoch:
                         continue
                     if isinstance(item, AudioSegmentEnd):
+                        self._reply_open = False
                         ended = reply.ended = True
                         break
                     parts.append(self._pcm(item))
                 new_pcm = np.concatenate(parts)
                 if not len(reply.audio):
                     t_audio = time.perf_counter()
+                    self._reply_open = not ended
                 buf.extend(new_pcm)
                 reply.audio = buf.view()
                 self._s.audio = self._rs.append(new_pcm)  # 24 kHz -> 16 kHz for the models
@@ -457,6 +473,15 @@ class LiteAvatarGenerator(VideoGenerator):
             if ep != self._epoch:
                 continue
             if payload is _END:
+                cur = self._playing
+                if cur is not None and reply is cur and last is not None:
+                    # frames skipped at the very end of the reply: their audio still plays, on the last picture
+                    while self._played * self._spf < len(cur.audio):
+                        yield self._vf(last)
+                        if epoch != self._epoch or self._playing is not cur:
+                            break
+                        yield self._af(cur.audio, self._played)
+                        self._played += 1
                 self._playing, last = None, None
                 yield AudioSegmentEnd()
                 continue
@@ -535,8 +560,11 @@ async def run_session(
     except asyncio.TimeoutError:
         logger.info("leaving: the agent never arrived or the session time limit was reached")
     finally:
-        await runner.aclose()
-        await gen.aclose()
+        for close in (runner.aclose, gen.aclose):
+            try:
+                await close()
+            except Exception as e:  # noqa: BLE001 - e.g. the runner never started
+                logger.debug("closing: %s", e)
         await room.disconnect()
         logger.info("left %s", room.name)
 

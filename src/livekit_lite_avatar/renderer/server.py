@@ -29,8 +29,8 @@ from aiohttp import web
 from .settings import Settings, valid_presenter_id
 
 logger = logging.getLogger("liteavatar.server")
-TAKE_TIMEOUT_S = 60.0  # wait for a preloaded worker
-JOIN_TIMEOUT_S = 25.0  # wait for it to join the room (the agent's request_timeout defaults to 90 s)
+TAKE_TIMEOUT_S = 45.0  # wait for a preloaded worker
+JOIN_TIMEOUT_S = 40.0  # wait for it to join (a presenter switch and a 20 s connect timeout); the agent waits 90 s
 WORKER = [sys.executable, "-m", "livekit_lite_avatar.renderer", "worker", "--warm"]
 
 
@@ -49,13 +49,15 @@ class Pool:
         self.failures = 0  # workers in a row that died while loading
         self.retry_base_s = 5.0  # back-off after a failed load: 5 s, 10 s, 20 s ... up to a minute
         self.procs: set[asyncio.subprocess.Process] = set()  # every worker started and not yet finished
+        self.ready: set[asyncio.subprocess.Process] = set()  # loaded, alive and not handed a session yet
         self.estimate: dict = {}  # the last worker's estimate of this machine's speed (see stream.estimate)
         self._tasks: set[asyncio.Task] = set()
         self._hurry = asyncio.Event()  # set when a session is waiting: skip the refill delay
+        self._closed = False
 
     @property
     def healthy(self) -> bool:
-        return self.failures < 3 or self.warm.qsize() > 0
+        return self.failures < 3 or bool(self.ready)
 
     def _bg(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -82,20 +84,33 @@ class Pool:
                         self.estimate = json.loads(line[5:].strip() or b"{}")
                     break
             await self.warm.put(proc)
+            self.ready.add(proc)
+            self._bg(self._watch_ready(proc))
             ok = True
             self.failures = 0
             logger.info("worker %d ready", proc.pid)
         finally:
             self.loading -= 1
-            if not ok:  # try again, backing off
+            if not ok and not self._closed:  # try again, backing off
                 self.failures += 1
                 self.top_up(delay=min(60.0, self.retry_base_s * 2 ** (self.failures - 1)), retry=True)
 
+    async def _watch_ready(self, proc: asyncio.subprocess.Process) -> None:
+        """A preloaded worker that dies before getting a session is no longer ready; load another."""
+        await proc.wait()
+        if proc in self.ready:
+            self.ready.discard(proc)
+            self.procs.discard(proc)
+            logger.warning("preloaded worker %d exited (code %s)", proc.pid, proc.returncode)
+            self.top_up()
+
     def top_up(self, delay: float = 0.0, retry: bool = False) -> None:
+        if self._closed:
+            return
         s = self.settings
         while (
-            self.warm.qsize() + self.loading < s.warm_workers
-            and len(self.active) + self.warm.qsize() + self.loading < s.max_sessions
+            len(self.ready) + self.loading < s.warm_workers
+            and len(self.active) + len(self.ready) + self.loading < s.max_sessions
         ):
             self.loading += 1  # count it now so a second call doesn't spawn twice
 
@@ -128,6 +143,7 @@ class Pool:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + TAKE_TIMEOUT_S
         self.pending += 1
+        reserved = True  # this request holds a place against max_sessions until its worker is active
         proc = None
         try:
             self.top_up()
@@ -135,6 +151,7 @@ class Pool:
                 if self.warm.empty():
                     self._hurry.set()
                 proc = await asyncio.wait_for(self.warm.get(), timeout=max(0.1, deadline - loop.time()))
+                self.ready.discard(proc)
                 if proc.returncode is not None:  # died while waiting
                     self.top_up()
                     continue
@@ -146,6 +163,8 @@ class Pool:
                     continue
                 break
             self.active.add(proc)
+            self.pending -= 1  # counted as active from here on
+            reserved = False
             self._bg(self._reap(proc))
             # loading a worker takes several seconds of CPU: don't do it while the new session is getting started
             self.top_up(delay=self.settings.refill_delay_s)
@@ -159,8 +178,10 @@ class Pool:
                 raise
             return proc
         finally:
-            self.pending -= 1
-            self._hurry.clear()
+            if reserved:
+                self.pending -= 1
+            if not self.pending:  # nobody else is waiting for a worker
+                self._hurry.clear()
 
     async def _reap(self, proc: asyncio.subprocess.Process) -> None:
         code = await proc.wait()
@@ -171,6 +192,7 @@ class Pool:
 
     async def close(self) -> None:
         """Stop every worker this server started: loading, warm and in a session (their avatars leave)."""
+        self._closed = True
         for task in list(self._tasks):
             task.cancel()
         procs = [p for p in self.procs if p.returncode is None]
@@ -224,7 +246,7 @@ def create_app(settings: Settings, pool: Pool | None = None) -> web.Application:
             {
                 "healthy": pool_.healthy,
                 "estimate": pool_.estimate,
-                "ready": pool_.warm.qsize(),
+                "ready": len(pool_.ready),
                 "loading": pool_.loading,
                 "active": len(pool_.active),
                 "max": settings.max_sessions,

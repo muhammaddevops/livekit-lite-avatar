@@ -231,3 +231,81 @@ def test_reply_after_an_interruption_plays_in_full(stream, wav):
 
     second = asyncio.run(asyncio.wait_for(go(), timeout=90))
     assert np.array_equal(second[: len(pcm)], pcm), "the reply after the interruption lost audio"
+
+
+def test_very_slow_cpu_still_plays_the_end_of_a_reply(stream, wav):
+    """At 0.3 s per frame, catching up can skip the last frames of a reply: their audio must still play."""
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE
+
+    pcm, seq, played, _drawn = _play_reply(stream, wav, extra_draw_s=0.3)
+    _check_reply(pcm, seq, played, SAMPLE_RATE // stream.out_fps)  # whole and unchanged, to the last chunk
+
+
+def test_renderer_error_ends_the_reply_once(stream, wav):
+    """If drawing fails mid-reply, that reply ends exactly once (the rest of it is dropped) and the next is intact."""
+    import librosa
+    import numpy as np
+    from livekit import rtc
+    from livekit.agents.voice.avatar import AudioSegmentEnd
+
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE, LiteAvatarGenerator
+
+    audio, _ = librosa.load(wav, sr=SAMPLE_RATE, mono=True)
+    pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+    stream.reset()
+    gen = LiteAvatarGenerator(stream, lip_delay_frames=SETTINGS.lip_delay_frames)
+    real_plan, calls = stream.plan, [0]
+
+    def failing_plan(final):
+        calls[0] += 1
+        if calls[0] == 2:
+            raise RuntimeError("simulated renderer failure")
+        return real_plan(final)
+
+    async def go():
+        async def feed(a: np.ndarray, end: bool) -> None:
+            for i in range(0, len(a), 480):
+                chunk = a[i : i + 480]
+                await gen.push_audio(rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, len(chunk)))
+            if end:
+                await gen.push_audio(AudioSegmentEnd())
+
+        player = gen.__aiter__()
+        ends = 0
+
+        async def play_for(seconds: float, collect: list | None = None) -> None:
+            nonlocal ends
+            loop = asyncio.get_running_loop()
+            stop = loop.time() + seconds
+            while loop.time() < stop:
+                item = await player.__anext__()
+                if isinstance(item, AudioSegmentEnd):
+                    ends += 1
+                    if collect is not None:
+                        return
+                elif isinstance(item, rtc.AudioFrame):
+                    if collect is not None:
+                        collect.append(np.frombuffer(item.data, np.int16))
+                else:
+                    await asyncio.sleep(1 / stream.out_fps)
+
+        stream.plan = failing_plan
+        await feed(pcm[: len(pcm) // 2], end=False)  # the first half; drawing fails on its second window
+        await play_for(2.0)
+        assert calls[0] >= 2, "the simulated failure didn't happen"
+        await feed(pcm[len(pcm) // 2 :], end=True)  # the rest arrives after the failure, then its end
+        await play_for(2.0)
+        stream.plan = real_plan
+        first_reply_ends = ends
+        second: list = []
+        await feed(pcm, end=True)  # the next reply
+        await play_for(30.0, collect=second)
+        await gen.aclose()
+        return first_reply_ends, np.concatenate(second)
+
+    try:
+        ends, second = asyncio.run(asyncio.wait_for(go(), timeout=90))
+    finally:
+        stream.plan = real_plan
+    assert ends == 1, f"the failed reply ended {ends} times"
+    assert np.array_equal(second[: len(pcm)], pcm), "the reply after the failure lost audio"

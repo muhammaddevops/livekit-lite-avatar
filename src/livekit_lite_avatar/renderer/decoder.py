@@ -24,12 +24,14 @@ class Decoder(nn.Module):
     def __init__(self, state_dict: dict[str, torch.Tensor]) -> None:
         super().__init__()
         self._names: dict[str, str] = {}
+        self.used: set[str] = set()  # weights read by forward(), to check nothing was left out
         for k, v in state_dict.items():
             name = k.replace(".", "_")
             self._names[k] = name
             self.register_buffer(name, v.detach().clone())
 
     def _w(self, key: str) -> torch.Tensor:
+        self.used.add(key)
         return getattr(self, self._names[key])
 
     def _adain(self, i: int, x: torch.Tensor, style: torch.Tensor) -> torch.Tensor:
@@ -74,9 +76,12 @@ class OnnxDecoder:
     """The decoder in ONNX Runtime. Call it like the TorchScript one: (reference features, params) -> image."""
 
     def __init__(self, torchscript_decoder: torch.jit.ScriptModule, example_refs: list, threads: int) -> None:
+        """Raises if this presenter's decoder isn't the architecture rebuilt here (the caller then keeps the
+        TorchScript one): every weight must be used, and the outputs must match on random mouth parameters."""
         import onnxruntime as ort
 
-        decoder = Decoder(torchscript_decoder.state_dict()).eval()
+        state = torchscript_decoder.state_dict()
+        decoder = Decoder(state).eval()
         params = torch.zeros(1, 32)
         buf = io.BytesIO()
         torch.onnx.export(
@@ -97,6 +102,17 @@ class OnnxDecoder:
         opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
         self._session = ort.InferenceSession(buf.getvalue(), opts, providers=["CPUExecutionProvider"])
         self._numpy_refs: dict[int, dict[str, np.ndarray]] = {}
+
+        unused = {k for k in state if not k.endswith("num_batches_tracked")} - decoder.used
+        if unused:
+            raise ValueError(f"this presenter's decoder has weights the rebuilt one doesn't use: {sorted(unused)}")
+        rng = np.random.default_rng(0)
+        with torch.inference_mode():
+            for _ in range(3):
+                p = torch.from_numpy(rng.normal(0, 0.5, (1, 32)).astype(np.float32))
+                diff = float((self(example_refs, p) - torchscript_decoder(example_refs, p)).abs().max())
+                if diff > 1e-3:
+                    raise ValueError(f"the rebuilt decoder differs from the presenter's by {diff:.1e}")
 
     def __call__(self, refs: list, params: torch.Tensor) -> torch.Tensor:
         key = id(refs)

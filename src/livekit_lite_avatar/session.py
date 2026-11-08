@@ -9,6 +9,7 @@ CPU and publishes video and audio together, so lips and voice stay in sync.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 
@@ -58,6 +59,8 @@ class LiteAvatarSession(AvatarSession):
         self._timeout = request_timeout
         self._audio_out: DataStreamAudioOutput | None = None
         self._closing = False
+        self._fallback_task: asyncio.Task | None = None
+        self._fallback_out = None  # the agent's own audio output, after a fall-back to voice
 
     @property
     def avatar_identity(self) -> str:
@@ -91,6 +94,7 @@ class LiteAvatarSession(AvatarSession):
                 "or LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET"
             )
         job_ctx = get_job_context()
+        self._closing = False
         await super().start(agent_session, room)
         try:
             token = self.mint_token(
@@ -117,11 +121,10 @@ class LiteAvatarSession(AvatarSession):
         logger.info("liteavatar renderer accepted the session", extra={"renderer": self._renderer_url})
 
     def _on_participant_disconnected(self, participant: rtc.RemoteParticipant) -> None:
-        if participant.identity != self._identity or self._closing:
+        if participant.identity != self._identity or self._closing or self._fallback_task is not None:
             return
         logger.error("the avatar left the room unexpectedly; the agent carries on with its own voice")
-        task = asyncio.create_task(self._fall_back_to_voice())
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        self._fallback_task = asyncio.create_task(self._fall_back_to_voice())
 
     async def _fall_back_to_voice(self) -> None:
         """Publish the agent's audio from the agent again, as if there had never been an avatar."""
@@ -139,8 +142,10 @@ class LiteAvatarSession(AvatarSession):
                 num_channels=1,
                 track_publish_options=rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
             )
-            await out.start()
+            self._fallback_out = out
+            # swap first: the output holds frames until its track is published and subscribed
             self._agent_session.output.replace_audio_tail(out)
+            await out.start()
         except Exception:
             logger.exception("could not fall back to voice; the agent is silent until the session ends")
 
@@ -148,6 +153,15 @@ class LiteAvatarSession(AvatarSession):
         self._closing = True  # our own removal of the avatar is not a reason to fall back
         if self._room is not None:
             self._room.off("participant_disconnected", self._on_participant_disconnected)
+        if self._fallback_task is not None:
+            self._fallback_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._fallback_task
+            self._fallback_task = None
+        if self._fallback_out is not None:
+            with contextlib.suppress(Exception):
+                await self._fallback_out.aclose()
+            self._fallback_out = None
         await super().aclose()
 
     def mint_token(self, *, room_name: str, publish_on_behalf: str, api_key: str, api_secret: str) -> str:

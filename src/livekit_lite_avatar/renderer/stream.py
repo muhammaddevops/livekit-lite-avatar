@@ -362,28 +362,31 @@ class LiteAvatarStream:
 
 
 def estimate(stream: LiteAvatarStream) -> dict:
-    """Time one speech window and a few frames on this machine, and estimate the real-time factor at the stream's
-    frame rate (render time / speech length; live calls want ~0.5 to leave room for encoding and the agent).
-    Takes a second or two; the stream is reset afterwards."""
+    """Time a steady-state speech window and a few frames on this machine, and estimate the real-time factor at the
+    stream's frame rate (render time / speech length; live calls want ~0.6 or less, to leave room for encoding and
+    the agent). Takes a second or two; the stream is reset afterwards."""
     rng = np.random.default_rng(0)
-    noise = (rng.standard_normal(int(2.5 * SR)) * 0.05).astype(np.float32)  # speech-like level, content irrelevant
+    # speech-like level (the content doesn't matter); just enough for two windows, so the second is computed alone
+    # (with more audio buffered, two windows would share one feature pass and the estimate would read low)
+    noise = (rng.standard_normal(int((HOP + WIN + LOOKAHEAD + 2) / FPS * SR)) * 0.05).astype(np.float32)
     k_next = stream.k_next
 
-    def one_window() -> tuple[float, float]:
+    def measure() -> tuple[float, float]:
         stream.reset()
         stream.feed(noise)
+        stream.plan(False)  # the first window has no left context: time the next one, as in a running reply
+        done = stream.done
         t = perf_counter()
         rows = stream.plan(False)
-        t_plan = perf_counter() - t
+        plan_per_s = (perf_counter() - t) / max(1e-6, (stream.done - done) / FPS)
         t = perf_counter()
         stream.draw(rows[:6])
-        return t_plan, (perf_counter() - t) / len(rows[:6])
+        return plan_per_s, (perf_counter() - t) / len(rows[:6])
 
-    one_window()  # warm-up: first calls allocate and pick kernels
-    t_plan, t_frame = one_window()
+    measure()  # warm-up: first calls allocate and pick kernels
+    plan_per_s, t_frame = measure()
     stream.reset()
     stream.k_next = k_next
-    plan_per_s = t_plan / (HOP / FPS)  # one window commits 0.8 s of speech
     rtf = plan_per_s + t_frame * stream.out_fps
     # the highest common frame rate that keeps the estimate at or under 0.85
     fits = [f for f in (30, 25, 20, 15, 12, 10) if plan_per_s + t_frame * f <= 0.85]

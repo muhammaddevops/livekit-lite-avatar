@@ -22,6 +22,7 @@ class FakePool:
         self.active: set = set()
         self.loading = 0
         self.pending = 0
+        self.ready: set = set()
         self.healthy = True
         self.jobs: list[dict] = []
         self.estimate = {"real_time_factor": 0.46, "suggested_fps": 30}
@@ -111,6 +112,7 @@ if mode == "dies":
 time.sleep(float(sys.argv[2]) if len(sys.argv) > 2 else 0)
 print("READY " + json.dumps({"real_time_factor": 0.5}), flush=True)
 job = json.loads(sys.stdin.readline())
+time.sleep(float(sys.argv[3]) if len(sys.argv) > 3 else 0)  # time to join
 print("JOINED" if mode == "joins" else "ERROR could not join the room: " + job["url"], flush=True)
 time.sleep(30)
 """
@@ -186,3 +188,17 @@ def test_pool_turns_away_requests_beyond_max_sessions_at_once(tmp_path):
         return sorted([a.status, b.status])
 
     assert _run(s, pool, fn) == [201, 503]
+
+
+def test_pool_counts_a_joining_session_once(tmp_path):
+    """Two agents at once, within max_sessions: both get a session, though the first is still joining."""
+    s, pool = _pool_app(tmp_path, "joins", "0", "1.0", max_sessions=2)  # loads at once, takes 1 s to join
+
+    async def fn(client):
+        await _wait(lambda: len(pool.ready) == 1)
+        first = asyncio.ensure_future(client.post("/sessions", json={"url": "wss://x", "token": "t"}))
+        await asyncio.sleep(0.3)  # the first is joining now
+        second = await client.post("/sessions", json={"url": "wss://x", "token": "t"})
+        return sorted([(await first).status, second.status])
+
+    assert _run(s, pool, fn) == [201, 201]

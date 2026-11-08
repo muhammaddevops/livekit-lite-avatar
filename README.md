@@ -99,7 +99,7 @@ stopped, or the session time limit passed), the agent switches back to publishin
 | `presenter` | the renderer's default | any presenter installed on the renderer |
 | `renderer_secret` | `LITEAVATAR_SECRET` | sent as `X-Renderer-Secret` |
 | `avatar_participant_identity`, `avatar_participant_name` | `liteavatar`, `Avatar` | how the avatar appears in the room |
-| `request_timeout` | 90 s | how long to wait for the renderer (up to 60 s for a free worker, 25 s to join) |
+| `request_timeout` | 90 s | how long to wait for the renderer (up to 45 s for a free worker, 40 s to join) |
 
 `start()` also takes `livekit_url`, `livekit_api_key` and `livekit_api_secret`, which otherwise come from the usual
 `LIVEKIT_*` variables.
@@ -287,7 +287,7 @@ These are off by default, because in a live call they looked worse overall. Try 
 - **CPU-bound.** Small cloud VMs don't keep up at 25 fps: the voice stays smooth, and the lips move at the rate
   frames can be drawn. See [Performance](#performance).
 - **Startup.** A worker takes from about 7 s (M4 Pro) to a minute to load, which is why one is kept warm. If none
-  is free, the renderer waits up to 60 s for one, then the agent gets a `LiteAvatarError`.
+  is free, the renderer waits up to 45 s for one, then the agent gets a `LiteAvatarError`.
 - **Versions.** The agent side needs `livekit-agents` 1.8.x. The renderer pins 1.8.11, because it builds on some
   of its internals: `AvatarRunner`'s publishing (to send a single layer), the data-stream receiver, and RoomIO's
   audio output for the fall-back to voice. The stream wrapper calls LiteAvatar's internals, so LiteAvatar is pinned
