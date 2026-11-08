@@ -58,13 +58,18 @@ async def entrypoint(ctx: JobContext) -> None:
     report["agent_identity"] = ctx.room.local_participant.identity
 
     await asyncio.sleep(plan.get("idle_before_s", 2.0))  # let the viewer see the idle loop first
+    speaking = asyncio.Event()  # the agent turns "speaking" when the renderer reports playback started
+    session.on("agent_state_changed", lambda ev: speaking.set() if ev.new_state == "speaking" else None)
     for item in plan["speech"]:
+        speaking.clear()
         said_at = time.time()
         handle = session.say(
             item.get("text") or "(test speech)", audio=wav_frames(item["wav"]), allow_interruptions=True
         )
         entry = {"wav": os.path.basename(item["wav"]), "said_at": said_at}
         if item.get("interrupt_after_s"):
+            await asyncio.wait_for(speaking.wait(), timeout=30)
+            entry["playback_started_at"] = time.time()
             await asyncio.sleep(item["interrupt_after_s"])
             entry["interrupted_at"] = time.time()
             handle.interrupt()

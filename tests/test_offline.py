@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import os
+import time
 
 import pytest
 
@@ -20,6 +21,7 @@ from livekit_lite_avatar.renderer import assets
 from livekit_lite_avatar.renderer.settings import Settings
 
 SETTINGS = Settings.from_env()
+PERF = os.getenv("LITEAVATAR_PERF_CHECKS", "1") != "0"  # 0: skip the "faster than real time" checks (slow CPUs)
 pytestmark = pytest.mark.skipif(
     bool(assets.check(SETTINGS)), reason="renderer assets not installed (run: liteavatar-renderer setup)"
 )
@@ -49,10 +51,15 @@ def test_offline_render(stream, wav, tmp_path):
     assert out.is_file() and out.stat().st_size > 10_000
     expected = result.audio_s * result.fps
     assert abs(result.frames - expected) <= 0.05 * expected + 6, "frame count does not match the audio length"
-    assert result.real_time_factor < 1.0, "this CPU renders slower than real time"
+    if PERF:
+        assert result.real_time_factor < 1.0, "this CPU renders slower than real time"
 
 
-def test_worker_generator_in_real_time(stream, wav):
+def _play_reply(stream, wav, extra_draw_s: float = 0.0):
+    """Feed a WAV to the worker's generator like TTS, play its output at real-time pace like AVSynchronizer.
+
+    Returns the source audio, the (kind, n) sequence of what came out, the audio played and how many frames were
+    drawn. extra_draw_s makes every drawn frame slower, to stand in for a slower CPU."""
     import librosa
     import numpy as np
     from livekit import rtc
@@ -64,7 +71,15 @@ def test_worker_generator_in_real_time(stream, wav):
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
     stream.reset()
     gen = LiteAvatarGenerator(stream, lip_delay_frames=SETTINGS.lip_delay_frames)
-    spf = SAMPLE_RATE // stream.out_fps
+    drawn = [0]
+    real_draw = stream.draw
+
+    def draw(rows):
+        drawn[0] += len(rows)
+        time.sleep(extra_draw_s * len(rows))
+        return real_draw(rows)
+
+    stream.draw = draw
 
     async def go():
         async def feed():  # TTS-like: 20 ms frames, faster than real time
@@ -88,19 +103,52 @@ def test_worker_generator_in_real_time(stream, wav):
         await gen.aclose()
         return seq, np.concatenate(played)
 
-    seq, played = asyncio.run(asyncio.wait_for(go(), timeout=len(pcm) / SAMPLE_RATE * 3 + 30))
+    try:
+        seq, played = asyncio.run(asyncio.wait_for(go(), timeout=len(pcm) / SAMPLE_RATE * 4 + 30))
+    finally:
+        stream.draw = real_draw
+    return pcm, seq, played, drawn[0]
+
+
+def _check_reply(pcm, seq, played, spf: int) -> tuple[int, int]:
+    """The reply's audio came out whole and unchanged, each chunk with a video frame; returns (pairs, stalls)."""
+    import numpy as np
+
     first = next(i for i, (kind, _) in enumerate(seq) if kind == "a")
     reply = seq[first - 1 :]
-    audio_out = len(played)
     pairs = sum(1 for (k1, _), (k2, _) in itertools.pairwise(reply) if k1 == "v" and k2 == "a")
-    stalls = sum(1 for (k1, _), (k2, _) in itertools.pairwise(reply) if k1 == "v" and k2 == "v")
-    print(
-        f"\n{pairs} audio chunks with their frames, {stalls} stalled frames, "
-        f"{first - 1} idle frames before the reply's audio started"
-    )
+    # pauses while speech remains: a frame with no audio after it, before the source audio has all played
+    speech_chunks, chunks, stalls = -(-len(pcm) // spf), 0, 0
+    for (k1, _), (k2, _) in itertools.pairwise(reply):
+        chunks += k1 == "a"
+        stalls += k1 == "v" and k2 == "v" and chunks < speech_chunks
     # the reply's audio comes out whole and unchanged, then a little silence while the mouth eases shut
     assert np.array_equal(played[: len(pcm)], pcm), "the reply's audio was not played back unchanged"
     assert not played[len(pcm) :].any(), "unexpected sound after the reply"
-    assert audio_out - len(pcm) <= (SETTINGS.lip_delay_frames + 6) * spf, "too much silence after the reply"
-    assert pairs == audio_out // spf, "an audio chunk came out without its video frame"
-    assert stalls <= 2, "the renderer fell behind real time during the reply"
+    assert len(played) - len(pcm) <= (SETTINGS.lip_delay_frames + 6) * spf, "too much silence after the reply"
+    assert pairs == len(played) // spf, "an audio chunk came out without its video frame"
+    return pairs, stalls
+
+
+def test_worker_generator_in_real_time(stream, wav):
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE
+
+    spf = SAMPLE_RATE // stream.out_fps
+    pcm, seq, played, drawn = _play_reply(stream, wav)
+    pairs, stalls = _check_reply(pcm, seq, played, spf)
+    print(f"\n{pairs} audio chunks with their frames, {drawn} drawn, {stalls} stalled frames")
+    if PERF:
+        assert stalls == 0, "the voice paused during the reply"
+        assert drawn >= pairs - SETTINGS.lip_delay_frames - 3, "frames were skipped on a fast enough CPU"
+
+
+def test_slow_cpu_keeps_the_voice_smooth(stream, wav):
+    """On a CPU too slow for real time, frames are skipped but the voice never pauses."""
+    from livekit_lite_avatar.renderer.worker import SAMPLE_RATE
+
+    spf = SAMPLE_RATE // stream.out_fps
+    pcm, seq, played, drawn = _play_reply(stream, wav, extra_draw_s=0.05)  # ~2.5x slower than real time
+    pairs, stalls = _check_reply(pcm, seq, played, spf)
+    print(f"\nslow CPU: {pairs} audio chunks, {drawn} frames drawn, {stalls} stalled frames")
+    assert stalls == 0, "the voice paused while the renderer was behind"
+    assert drawn < 0.8 * pairs, "the renderer should have skipped frames to keep up"

@@ -292,6 +292,11 @@ class LiteAvatarStream:
         self._prev = (t30[-1], rows_i[-1])
         return out.astype(np.float32)
 
+    def skip(self, n: int) -> None:
+        """Advance past n output frames without drawing them (the renderer fell behind real time)."""
+        self.k_next += n
+        self._drawn += n
+
     def draw(self, rows: np.ndarray) -> list[tuple[np.ndarray, float]]:
         """(frame, speech energy) for each row; pass both to move() when the frame is shown."""
         if not len(rows):

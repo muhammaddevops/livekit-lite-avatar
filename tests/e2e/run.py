@@ -104,15 +104,16 @@ class Stack:
 
         wait_until(ready, 180, "a warm renderer worker")
 
-    def start_agent(self) -> None:
+    def start_agent(self, script: Path = HERE / "agent.py", env: dict | None = None) -> None:
         """An agent worker that registers with the server and waits for dispatches, as in production."""
         env = {
             "LIVEKIT_URL": self.lk_url,
             "LIVEKIT_API_KEY": KEY,
             "LIVEKIT_API_SECRET": SECRET,
             "LITEAVATAR_RENDERER_URL": self.renderer_url,
+            **(env or {}),
         }
-        self.spawn("agent", [sys.executable, str(HERE / "agent.py"), "start", "--log-level", "info"], env)
+        self.spawn("agent", [sys.executable, str(script), "start", "--log-level", "info"], env)
         log = self.logs / "agent.log"
         wait_until(lambda: "registered worker" in log.read_text(), 60, "the agent worker to register")
 
@@ -391,7 +392,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--wav", action="append", help="speech to say, in order (default: LiteAvatar's sample)")
     ap.add_argument("--presenter", help="presenter for the session (default: the renderer's default)")
-    ap.add_argument("--interrupt-after", type=float, help="interrupt the last WAV after this many seconds")
+    ap.add_argument(
+        "--interrupt-after",
+        type=float,
+        help="interrupt the last WAV this many seconds after the avatar starts speaking",
+    )
     ap.add_argument("--record", type=Path, help="write what the viewer received to this MP4")
     ap.add_argument("--logs", type=Path, help="keep process logs in this folder")
     ns = ap.parse_args()

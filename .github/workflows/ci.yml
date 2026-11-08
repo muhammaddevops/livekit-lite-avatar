@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -80,18 +80,23 @@ jobs:
           key: ${{ steps.assets.outputs.cache-primary-key }}
       - name: Tests, including the live end-to-end run on a local LiveKit server
         env:
-          LITEAVATAR_E2E_PERF: "0"  # shared runners: check behaviour here, report timing in the benchmark below
+          LITEAVATAR_PERF_CHECKS: "0"  # small shared runners are slower than real time: check behaviour here,
+                                       # and report the timing in the benchmark below
         run: .venv/bin/pytest -p no:warnings -rA tests/
       - name: Benchmark
         if: always() && steps.assets.outcome == 'success'
         run: |
           .venv/bin/python scripts/benchmark.py --json bench.json | tee bench.md
-          { echo "### Renderer on ${{ matrix.os }}"; echo; cat bench.md; } >> "$GITHUB_STEP_SUMMARY"
+          .venv/bin/python scripts/profile_renderer.py | tee profile.txt
+          { echo "### Renderer on ${{ matrix.os }}"; echo; cat bench.md; echo; echo '```'; cat profile.txt; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: benchmark-${{ matrix.os }}
-          path: bench.json
+          path: |
+            bench.json
+            profile.txt
           if-no-files-found: ignore
 
   docker:
