@@ -348,8 +348,9 @@ def measure(
         "avatar_joined_s": agent.get("avatar_joined_s"),
         "speech": [],
     }
-    vt = np.asarray(vtimes)
-    vfresh = np.asarray(fresh[: len(vt)], bool)
+    n = min(len(vtimes), len(fresh))  # the reader may have been cancelled between the two appends
+    vt = np.asarray(vtimes[:n])
+    vfresh = np.asarray(fresh[:n], bool)
     spans = _speech_spans(asamples)
     agent_spans = _speech_spans(agent_samples)
     for i, (item, rep) in enumerate(zip(plan["speech"], agent["speech"], strict=True)):

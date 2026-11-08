@@ -24,8 +24,8 @@ await avatar.start(session, room=ctx.room)
 
 - **Drop-in.** The same shape as the hosted avatar plugins. The renderer reports when each reply really starts and
   stops playing, so the agent's speaking state, transcription timing and interruptions follow the avatar.
-- **Fast enough on a laptop.** An Apple M4 Pro draws 576x792 at 25 fps in under 40% of real time, and speech
-  reaches participants about 0.4 s after `say()`.
+- **Fast enough on a laptop or a small VM.** An Apple M4 Pro draws 576x792 at 25 fps in under 40% of real time. A
+  4-vCPU x86 cloud VM keeps up too. Speech reaches participants about 0.4 s after `say()`.
 - **Degrades gracefully.** On a CPU too slow for real time, the voice stays whole and smooth and late frames are
   skipped. Each worker measures the machine at startup and suggests a frame rate. If the avatar leaves mid-call,
   the agent carries on with its own voice.
@@ -153,24 +153,32 @@ audio plays over the last picture and the frames it missed are skipped, so the v
 The real-time factor is drawing time divided by speech length: below 1 the renderer keeps up. A live call wants
 about 0.6 or less, leaving room for video encoding, the agent and anything else on the machine.
 
-| Machine | Real-time factor | First sound after `say()` | Frame rate while speaking |
+| Machine | Real-time factor | First sound after `say()` | New lip pictures per second (of 25) |
 |---|---|---|---|
-| Apple M4 Pro, 14 cores (laptop) | 0.46 | 0.35 s | 25 fps |
-<!-- CI-RESULTS -->
+| Apple M4 Pro laptop, 14 cores (6 threads) | 0.37 | 0.45 s | 23.2 |
+| Linux x86 CI runner, AMD EPYC 9V45, 4 vCPU (3 threads) | 0.63 | 0.42 s | 22.9 |
+| Linux ARM CI runner, 4 vCPU (3 threads) | 1.15 | 0.86 s | 12.5 |
+| macOS CI runner, Apple M1 (virtual), 3 vCPU (2 threads) | 1.61 | 1.78 s | 12.8 |
 
-The M4 Pro figures come from `scripts/benchmark.py`, and match live calls with the LLM, agent and browser on the
-same laptop (0.44 to 0.47). The other rows are GitHub's shared CI runners, from the latest
-[CI run](https://github.com/muhammaddevops/livekit-lite-avatar/actions/workflows/ci.yml); their run summaries
-show the full benchmark and a profile.
+All from `scripts/benchmark.py`: 22 s of speech rendered offline, then the same speech in a live call on a local
+LiveKit server, measured by a viewer. In every row all the speech arrived intact. On the slower machines the lips
+moved at the rate frames could be drawn, with the voice unaffected. Lip pictures fall a little short of 25 even on
+the M4 Pro, because the mouth rests in pauses. The CI runners share their CPUs with the LiveKit server, the agent
+and the viewer, and GitHub assigns different CPU models from run to run. Each
+[CI run](https://github.com/muhammaddevops/livekit-lite-avatar/actions/workflows/ci.yml) summary shows its own
+benchmark and profile. On the M4 Pro, live calls with the LLM, agent and browser on the same laptop measured 0.44
+to 0.47 with LiteAvatar's own decoder.
 
 Most of the time goes on the presenter's face decoder, which draws each frame's mouth. LiteAvatar ships it as
 TorchScript; the renderer rebuilds the same network from its weights (identical output, to within 1e-5) and runs it
 in ONNX Runtime, which is much faster on CPU:
 
-| Face decoder, ms per frame | Apple M4 Pro | Linux x86 runner (4 vCPU) | Linux ARM runner (4 vCPU) | macOS M1 runner (3 vCPU) |
+| Face decoder, ms per frame | Apple M4 Pro | Linux x86 runner (EPYC 7763) | Linux ARM runner | macOS M1 runner |
 |---|---|---|---|---|
 | LiteAvatar's TorchScript | 10.7 | 73.6 | 61.9 | 42.8 |
 | ONNX Runtime (default) | 8.1 | 24.5 | 21.4 | 25.5 |
+
+(One CI run, both decoders with the same threads: 6 on the M4 Pro, 4 on the Linux runners, 3 on the M1.)
 
 Per second of speech, the rest is speech features (120 ms on the M4 Pro) and audio2mouth (10 ms). The decoder's cost
 is per frame, so a lower `--fps` is the main lever on slower machines. `LITEAVATAR_DECODER=torch` uses LiteAvatar's
@@ -182,6 +190,8 @@ own decoder.
   LiveKit server and prints a table. Results for CPUs not listed here are welcome, through the issue form.
 - The renderer estimates its own speed as each worker loads. It logs a warning with a suggested `--fps` if the
   machine can't keep up, and shows the estimate in `GET /health`.
+- Each worker leaves one core free by default (`LITEAVATAR_THREADS`). On a machine that only runs the renderer
+  and serves one session at a time, set it to the number of cores.
 
 ## Configuration
 
