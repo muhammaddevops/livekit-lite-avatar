@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3  # an exact version: setup-uv publishes no major tags
       - name: Check the tag matches the package version
         run: |
           version=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)

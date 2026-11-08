@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3  # an exact version: setup-uv publishes no major tags
       - run: uvx ruff@0.17.4 check src tests examples scripts
       - run: uvx ruff@0.17.4 format --check src tests examples scripts
 
@@ -32,7 +32,7 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3  # an exact version: setup-uv publishes no major tags
         with:
           cache-python: true  # keep uv's Python downloads in the Actions cache
       - name: Install the agent side only (no torch), latest compatible dependencies
@@ -57,7 +57,7 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3  # an exact version: setup-uv publishes no major tags
         with:
           cache-python: true
       - name: Restore LiteAvatar assets (~1.3 GB, downloaded from upstream on a cache miss)
