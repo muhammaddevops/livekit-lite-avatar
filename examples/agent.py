@@ -22,7 +22,10 @@ logger = logging.getLogger("liteavatar-example")
 def own_jobs_load(server: AgentServer) -> float:
     """This worker's load as its share of calls, not the machine's CPU. The renderer keeps the CPU busy when it runs on
     the same machine, and LiveKit's default (CPU above 70%) would then stop this worker from taking calls."""
-    return min(1.0, len(server.active_jobs) / 4)
+    try:
+        return min(1.0, len(server.active_jobs) / 4)
+    except AttributeError:  # not running yet
+        return 0.0
 
 
 server = AgentServer(load_fnc=own_jobs_load)
