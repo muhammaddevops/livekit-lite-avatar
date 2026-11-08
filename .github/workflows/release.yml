@@ -1,9 +1,10 @@
 name: Release
 
-# Runs when a version tag is pushed (git tag v0.1.0 && git push origin v0.1.0). Before the first release:
-#   PyPI: add a trusted publisher for this repository, workflow release.yml, environment "pypi"
-#         (https://docs.pypi.org/trusted-publishers/adding-a-publisher/).
-#   GHCR: nothing to set up; the image goes to ghcr.io/<owner>/livekit-lite-avatar-renderer.
+# Runs when a version tag is pushed (git tag v0.1.0 && git push origin v0.1.0): the whole CI suite on that commit,
+# then the renderer image on GHCR (ghcr.io/<owner>/livekit-lite-avatar-renderer, nothing to set up) and a GitHub
+# release with the changelog's notes.
+# PyPI is opt-in: add a trusted publisher for this repository (workflow release.yml, environment "pypi"; see
+# https://docs.pypi.org/trusted-publishers/adding-a-publisher/), then set the repository variable PYPI_PUBLISH=true.
 
 on:
   push:
@@ -35,6 +36,7 @@ jobs:
 
   pypi:
     needs: dist
+    if: vars.PYPI_PUBLISH == 'true'
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:
@@ -80,14 +82,19 @@ jobs:
 
   github-release:
     needs: [pypi, image]
+    if: ${{ !cancelled() && needs.image.result == 'success' && needs.pypi.result != 'failure' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
       - name: Release notes from CHANGELOG.md
         run: |
           awk -v v="${GITHUB_REF_NAME#v}" '$0 ~ "^## \\[?"v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
-      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md dist/*
         env:
           GH_TOKEN: ${{ github.token }}

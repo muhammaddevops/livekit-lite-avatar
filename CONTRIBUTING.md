@@ -37,6 +37,8 @@ audio-to-mouth and the face decoder, and `scripts/benchmark.py` measures a live 
 ## Release
 
 1. Update the version in `pyproject.toml` and the date in `CHANGELOG.md`.
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`. The release workflow checks the tag against the
-   version, publishes to PyPI (trusted publishing, environment `pypi`), pushes the renderer image to GHCR and
-   creates the GitHub release from the changelog.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`. The release workflow runs the whole CI suite on that
+   commit, checks the tag against the version, pushes the renderer image to GHCR (amd64 and arm64) and creates the
+   GitHub release from the changelog, with the wheel and sdist attached.
+3. PyPI is opt-in: add a trusted publisher on PyPI (this repository, workflow `release.yml`, environment `pypi`)
+   and set the repository variable `PYPI_PUBLISH=true`. From then on, releases are published there too.
