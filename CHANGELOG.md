@@ -12,7 +12,10 @@
   ahead of the face no longer runs dry (and comes out stretched) while a slow window is being drawn.
 - A renderer error no longer cuts a reply short: the rest of its voice plays without new frames, the reply ends once,
   and the next reply has its face back.
-- The browser demo's test waits for the agent to subscribe to its microphone before it talks.
+- Tests: the browser demo's test waits for the agent to subscribe to its microphone before it talks. On machines far
+  behind real time (`LITEAVATAR_PERF_CHECKS=0`), the live test now requires playback to finish within 6 s of the
+  speech (it was 10 s, and took 30 s before this fix), and lets the voice arrive stretched by CPU starvation, never
+  cut short.
 
 ## [0.1.0] - 2026-11-08
 

@@ -56,9 +56,14 @@ def test_avatar_publishes_one_layer_on_the_agents_behalf(result):
 def test_full_reply_plays_and_the_agent_hears_it_finish(result):
     first = result["speech"][0]
     assert first["interrupted"] is False
-    assert abs(first["audible_s"] - first["wav_audible_s"]) < 0.25, "speech was cut short or stretched"
-    # the agent hears playback finish (not stuck waiting): within 3 s of the speech normally, 10 s on a slow machine
-    slack = 3 if PERF else 10
+    # heard in full, at its own length. On a machine far behind real time (LITEAVATAR_PERF_CHECKS=0, such as CI's
+    # 3-vCPU macOS runner, 4x too slow), the renderer's drawing starves everything else on it, and the voice reaches
+    # the viewer with gaps of up to a second or so in all; none of it may be lost
+    assert first["audible_s"] > first["wav_audible_s"] - 0.25, "speech was cut short"
+    assert first["audible_s"] < first["wav_audible_s"] + (0.25 if PERF else 2.5), "speech was stretched"
+    # the agent hears playback finish when it did, not once the renderer has caught up: within 3 s of the speech
+    # normally, 6 s on a slow machine (the voice starts at most 1 s late there, and may be stretched)
+    slack = 3 if PERF else 6
     assert first["agent_playout_s"] <= first["wav_s"] + slack, "the agent waited too long for playback to finish"
 
 
