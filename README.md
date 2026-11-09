@@ -65,7 +65,7 @@ keeps one spare loaded. Or run the [Docker image](#docker).
 **2. Install the package where your agent runs.** It is small and doesn't need torch:
 
 ```bash
-pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git@v0.1.0"
+pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git@v0.1.1"
 ```
 
 **3. Start the avatar with your session.**
@@ -260,7 +260,7 @@ secret on the agent side), and keep it behind a firewall: the secret is its only
 
 ```bash
 docker run -p 8791:8791 -v liteavatar-data:/data -e LITEAVATAR_SECRET=change-me \
-  ghcr.io/muhammaddevops/livekit-lite-avatar-renderer:0.1.0
+  ghcr.io/muhammaddevops/livekit-lite-avatar-renderer:0.1.1
 ```
 
 Published for linux/amd64 and linux/arm64 with each release (or `docker build -t livekit-lite-avatar-renderer .`).

@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.1] - 2026-11-09
+
+Fixes for renderers far behind real time. On a machine that keeps up, nothing changes.
 
 **Fixed**
 - On a renderer far behind real time (an overloaded or very slow machine), replies could start and end many seconds
