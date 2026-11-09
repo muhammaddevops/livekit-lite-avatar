@@ -241,6 +241,93 @@ def test_very_slow_cpu_still_plays_the_end_of_a_reply(stream, wav):
     _check_reply(pcm, seq, played, SAMPLE_RATE // stream.out_fps)  # whole and unchanged, to the last chunk
 
 
+def test_an_overloaded_renderer_starts_and_ends_the_voice_on_time(stream, wav):
+    """When speech features take far longer than real time (an overloaded machine: 3 s per window here), the voice
+    doesn't wait for the face: it starts START_WAIT_S after the audio arrived, plays whole and smooth, and the reply
+    ends once its audio has played, not once the renderer has caught up, so the agent hears that playback finished
+    on time. The frames the renderer finishes later change nothing, and the next reply plays in full."""
+    import librosa
+    import numpy as np
+    from livekit import rtc
+    from livekit.agents.voice.avatar import AudioSegmentEnd
+
+    from livekit_lite_avatar.renderer.worker import END_WAIT_FRAMES, SAMPLE_RATE, START_WAIT_S, LiteAvatarGenerator
+
+    audio, _ = librosa.load(wav, sr=SAMPLE_RATE, mono=True)
+    pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+    spf = SAMPLE_RATE // stream.out_fps
+    stream.reset()
+    gen = LiteAvatarGenerator(stream, lip_delay_frames=SETTINGS.lip_delay_frames)
+    real_plan, plans = stream.plan, [0]
+
+    def overloaded_plan(final):
+        plans[0] += 1
+        time.sleep(3.0)
+        return real_plan(final)
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        player = gen.__aiter__()
+
+        async def feed(a: np.ndarray) -> None:
+            for i in range(0, len(a), 480):
+                chunk = a[i : i + 480]
+                await gen.push_audio(rtc.AudioFrame(chunk.tobytes(), SAMPLE_RATE, 1, len(chunk)))
+            await gen.push_audio(AudioSegmentEnd())
+
+        async def play(until_end: bool, seconds: float = 60.0) -> tuple[list, list, float, float, int]:
+            """Play like AVSynchronizer; returns (sequence, audio, first audio time, end time, ends seen)."""
+            seq, out, t_audio, t_end, ends = [], [], 0.0, 0.0, 0
+            stop = loop.time() + seconds
+            while loop.time() < stop:
+                item = await player.__anext__()
+                if isinstance(item, AudioSegmentEnd):
+                    ends += 1
+                    t_end = loop.time()
+                    if until_end:
+                        break
+                elif isinstance(item, rtc.AudioFrame):
+                    t_audio = t_audio or loop.time()
+                    seq.append(("a", item.samples_per_channel))
+                    out.append(np.frombuffer(item.data, np.int16))
+                else:
+                    seq.append(("v", zlib.crc32(bytes(item.data))))
+                    await asyncio.sleep(1 / stream.out_fps)
+            return seq, out, t_audio, t_end, ends
+
+        stream.plan = overloaded_plan
+        t0 = loop.time()
+        await feed(pcm)
+        seq, out, t_audio, t_end, ends = await play(until_end=True)
+        # the windows the renderer still finishes for that reply (it needs ~12 s) must not come out: no second end,
+        # no more of its audio
+        _, late_audio, _, _, late_ends = await play(until_end=False, seconds=5.0)
+        stream.plan = real_plan
+        await feed(pcm)  # the next reply, on a machine that keeps up again
+        _, second, _, _, _ = await play(until_end=True)
+        await gen.aclose()
+        return seq, np.concatenate(out), t_audio - t0, t_end - t0, ends, late_audio, late_ends, second
+
+    try:
+        seq, played, start_s, end_s, ends, late_audio, late_ends, second = asyncio.run(
+            asyncio.wait_for(go(), timeout=120)
+        )
+    finally:
+        stream.plan = real_plan
+    _pairs, stalls = _check_reply(pcm, seq, played, spf)
+    speech_s = len(pcm) / SAMPLE_RATE
+    print(
+        f"\noverloaded: voice at {start_s:.2f}s, ended at {end_s:.2f}s for {speech_s:.2f}s of speech "
+        f"({plans[0]} windows planned at 3 s each); {stalls} stalls"
+    )
+    assert start_s < START_WAIT_S + (0.5 if PERF else 1.5), "the voice waited for the first frame"
+    assert stalls == 0, "the voice paused"
+    # it ends a few frames after its audio has played, while the renderer is still far behind
+    assert end_s - start_s < speech_s + (END_WAIT_FRAMES + 3) / stream.out_fps + (0.5 if PERF else 1.5)
+    assert ends == 1 and late_ends == 0 and not late_audio, "the reply ended more than once, or played on after it"
+    assert np.array_equal(np.concatenate(second)[: len(pcm)], pcm), "the next reply lost audio"
+
+
 def test_renderer_error_ends_the_reply_once(stream, wav):
     """If drawing fails mid-reply, that reply ends exactly once (the rest of it is dropped) and the next is intact."""
     import librosa

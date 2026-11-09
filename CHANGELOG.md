@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+**Fixed**
+- On a renderer far behind real time (an overloaded or very slow machine), replies could start and end many seconds
+  late: the voice waited for the first frame, and the agent heard that playback finished only once every frame had
+  been drawn (30 s for a 5.5 s reply on a busy CI runner). Now the voice starts at most 1 s after there is audio
+  enough to draw, over the idle video if need be. The reply ends as soon as its audio has played, and the frames
+  still being drawn for it are dropped.
+- The renderer takes in the agent's audio, and the end of each reply, before every window it draws, not only once it
+  has caught up.
+- After a renderer error, a reply that had already ended isn't ended a second time.
+- The browser demo's test waits for the agent to subscribe to its microphone before it talks.
+
 ## [0.1.0] - 2026-11-08
 
 First release: a self-hosted, CPU-only, lip-synced video avatar for LiveKit Agents 1.8, built on Alibaba's

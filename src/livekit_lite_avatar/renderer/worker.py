@@ -45,6 +45,11 @@ _END = object()
 LEAD_FRAMES = 8  # about the time to the first drawn frame of a reply
 DRAW_BATCH = 6  # frames drawn per hand-over
 FIRST_BATCH = 2  # each window's first hand-over is smaller, so it is ready sooner (drawing is faster than playback)
+# Longest a reply's voice waits for its first frame once there is enough audio to draw it. A machine fit for live use
+# has the first frame ready in well under half of this; on one that has fallen behind (overloaded, or too slow), the
+# voice starts anyway and the lips join late, rather than the reply starting seconds late.
+START_WAIT_S = 1.0
+END_WAIT_FRAMES = 4  # once a reply's audio has all played, frames to wait for the producer before ending it anyway
 # When playback has caught up with drawing, the next frame drawn must be one that will still be ahead of playback
 # once it is ready: as many frames ahead as drawing one takes, plus one.
 
@@ -230,16 +235,22 @@ class _Reply:
 
     audio: np.ndarray
     ended: bool = False  # all of the reply's audio has arrived
+    finished: bool = False  # the player has played all of it and ended it; any frames still being drawn are moot
     skipped: int = 0  # frames not drawn because their audio had already played
+    start_by: float = 0.0  # perf_counter time after which its voice starts without waiting for a frame (0: not set)
+    voice_first: bool = False  # its voice started before its first frame was ready
 
 
 class LiteAvatarGenerator(VideoGenerator):
     """Audio in, (video, audio) frames out. A producer task renders ahead of playback; the player plays idle frames
     between replies, so the video never stalls.
 
-    Once a reply has started, its voice never waits for the face: if the next frame isn't ready (the CPU is slower
-    than real time), the next audio chunk plays over the last picture and the producer skips the frames it missed.
-    Lips get choppier on a slow machine, but speech stays smooth."""
+    The voice never waits long for the face. If the next frame isn't ready (the CPU is slower than real time), the
+    next audio chunk plays over the last picture and the producer skips the frames it missed. If a reply's first
+    frame isn't ready START_WAIT_S after there was enough audio to draw it, the voice starts over the idle video and
+    the lips join once frames are ready in time. Once all of a reply's audio has played, the reply ends, even if the
+    producer is still drawing it, so the agent hears that playback finished on time. Lips get choppier on a slow
+    machine, but speech starts and ends on time and stays smooth."""
 
     def __init__(self, stream: LiteAvatarStream, lip_delay_frames: int = 1) -> None:
         self._s = stream
@@ -255,6 +266,7 @@ class LiteAvatarGenerator(VideoGenerator):
         self._rs = Resampler24to16()
         self._playing: _Reply | None = None  # the reply being played, and how many of its frames have played
         self._played = 0
+        self._producing: _Reply | None = None  # the reply the producer is working on
         self._frame_s = 0.5 / stream.out_fps  # recent time to draw one frame, for aiming ahead when behind
         self._reply_open = False  # the producer has a reply's audio but not yet its end
         self._drop_until_end = False  # after a renderer error: drop the rest of that reply, then end it
@@ -266,7 +278,7 @@ class LiteAvatarGenerator(VideoGenerator):
     async def clear_buffer(self) -> None:
         """Drop the current reply at once (an interruption); AvatarRunner awaits this."""
         self._epoch += 1
-        self._playing = None
+        self._playing = self._producing = None
         self._reply_open = self._drop_until_end = False
         for q in (self._in, self._out):
             while not q.empty():
@@ -287,6 +299,22 @@ class LiteAvatarGenerator(VideoGenerator):
             logger.warning("audio arrives at %d Hz, expected %d Hz; lips will drift", frame.sample_rate, SAMPLE_RATE)
         return _mono(frame)
 
+    def _hold(self, last: np.ndarray | None) -> np.ndarray:
+        """The picture to show while the voice is ahead of the face: the last one of this reply, or else (its voice
+        started before its first frame) the idle video."""
+        if last is not None:
+            return last
+        img = self._s.move(self._s.idle_frame(self._k), self._k, 0.0)
+        self._k += 1
+        return img
+
+    def _voice_may_start(self) -> bool:
+        """The reply being drawn has waited START_WAIT_S for its first frame and has audio to play."""
+        r = self._producing
+        if r is None or r.finished or not r.start_by or time.perf_counter() < r.start_by:
+            return False
+        return len(r.audio) >= self._spf or (r.ended and len(r.audio) > 0)
+
     def _chunk(self, a24: np.ndarray, i: int) -> np.ndarray:
         """Audio for video frame i of the segment, zero-padded at the end."""
         spf = self._spf
@@ -303,11 +331,13 @@ class LiteAvatarGenerator(VideoGenerator):
                 raise
             except Exception:
                 logger.exception("renderer error; ending this reply")
-                reply_open = self._reply_open
+                reply_open, cur = self._reply_open, self._producing
+                # a reply the player has already ended (all its audio played) needs no second end
+                unended = cur is not None and len(cur.audio) > 0 and not cur.finished
                 await self.clear_buffer()
                 if reply_open:  # the rest of this reply is still arriving: drop it, then end the reply once
                     self._drop_until_end = True
-                else:  # tell AvatarRunner the reply is over, so the agent hears playback finished
+                elif unended:  # tell AvatarRunner the reply is over, so the agent hears playback finished
                     await self._out.put((self._epoch, None, 0, _END))
                 await asyncio.sleep(0.2)
 
@@ -316,7 +346,7 @@ class LiteAvatarGenerator(VideoGenerator):
         self._rs.reset()
         epoch = self._epoch
         buf = _Buffer(np.int16)
-        reply = _Reply(buf.view())  # this reply's audio, as received (24 kHz)
+        reply = self._producing = _Reply(buf.view())  # this reply's audio, as received (24 kHz)
         emitted = 0  # frames handed to the player for this reply
         ended = False
         t_audio = t_first = 0.0  # when this reply's first audio arrived, and its first drawn frame was ready
@@ -325,19 +355,47 @@ class LiteAvatarGenerator(VideoGenerator):
             nonlocal reply, emitted, ended, t_audio, t_first
             buf.clear()
             reply, emitted, ended, t_audio, t_first = _Reply(buf.view()), 0, False, 0.0, 0.0
+            self._producing = reply
             self._s.reset()
             self._rs.reset()
 
         async def put(payload, i: int) -> None:
             await self._out.put((epoch, reply, i, payload))
 
+        def log_reply() -> None:
+            audio_s = len(reply.audio) / SAMPLE_RATE
+            frames = max(emitted, -(-len(reply.audio) // self._spf))
+            skipped = reply.skipped + max(0, frames - emitted)  # frames never reached count as skipped too
+            notes = [f"{skipped} of {frames} frames skipped to keep up"] if skipped else []
+            if reply.voice_first:
+                notes.append("the voice started before the first frame")
+            if reply.finished:
+                notes.append("the reply ended before the renderer caught up")
+            log = logger.warning if notes else logger.info
+            log(
+                "reply: %.1fs audio, %s, real-time factor %.2f%s",
+                audio_s,
+                f"first frame {t_first - t_audio:.2f}s after its audio arrived" if t_first else "no frame drawn",
+                self._s.stats["compute_s"] / audio_s if audio_s else 0.0,
+                f"; {', '.join(notes)} (try a lower --fps)" if notes else "",
+            )
+
         while True:
             if epoch != self._epoch:
                 epoch = self._epoch
                 reset()
-            # wait for audio unless there is buffered work to do
-            if not self._s.ready(ended) and not (ended and len(reply.audio)):
-                ep, item = await self._in.get()
+            if reply.finished:  # the player has ended it, all its audio played: the frames not yet drawn are moot
+                log_reply()
+                reset()
+                continue
+            # take in what has arrived: wait for it unless there is buffered work to do, and even then don't leave it
+            # queued, so that a reply's end is known (and the player can end the reply) as soon as it arrives
+            waiting = not self._s.ready(ended) and not (ended and len(reply.audio))
+            if waiting or (not ended and not self._in.empty()):
+                if waiting:
+                    ep, item = await self._in.get()
+                else:
+                    ep, item = self._in.get_nowait()
                 if epoch != self._epoch:  # interrupted while waiting: this item may belong to the next reply
                     epoch = self._epoch
                     reset()
@@ -376,8 +434,10 @@ class LiteAvatarGenerator(VideoGenerator):
                 continue
             if self._s.done == 0:  # first window: continue the idle motion from where it will be shown
                 self._s.k_next = self._k + LEAD_FRAMES
+                if not reply.start_by:  # from now on there is enough audio to draw: the voice waits only so long
+                    reply.start_by = time.perf_counter() + START_WAIT_S
             rows = await asyncio.to_thread(self._s.plan, ended)
-            if epoch != self._epoch:
+            if epoch != self._epoch or reply.finished:
                 continue
             if emitted == 0 and len(rows) and self._lip_delay:
                 for _ in range(self._lip_delay):  # voice starts, lips follow a moment later
@@ -385,7 +445,7 @@ class LiteAvatarGenerator(VideoGenerator):
                     emitted += 1
             # draw a few frames at a time and hand each batch over at once, so playback starts early
             j = 0
-            while j < len(rows) and epoch == self._epoch:
+            while j < len(rows) and epoch == self._epoch and not reply.finished:
                 playing = self._playing is reply and self._played > 0
                 played = self._played if playing else 0
                 # frames playback moves on while one is drawn, plus one: playback may be part-way through a frame
@@ -417,7 +477,7 @@ class LiteAvatarGenerator(VideoGenerator):
                     await put((k0 + jj, f, energy), emitted)
                     emitted += 1
                 j += len(batch)
-            if epoch != self._epoch:
+            if epoch != self._epoch or reply.finished:
                 continue
             if ended and not self._s.ready(True):
                 # any audio beyond the last drawn frame plays over idle frames
@@ -425,17 +485,7 @@ class LiteAvatarGenerator(VideoGenerator):
                     await put(None, emitted)
                     emitted += 1
                 await put(_END, emitted)
-                audio_s = len(reply.audio) / SAMPLE_RATE
-                log = logger.warning if reply.skipped else logger.info
-                log(
-                    "reply: %.1fs audio, first frame %.2fs after its audio arrived, real-time factor %.2f%s",
-                    audio_s,
-                    (t_first - t_audio) if t_first else -1.0,
-                    self._s.stats["compute_s"] / audio_s if audio_s else 0.0,
-                    f"; {reply.skipped} of {emitted} frames skipped to keep up (try a lower --fps)"
-                    if reply.skipped
-                    else "",
-                )
+                log_reply()
                 reset()
 
     def __aiter__(self):
@@ -446,6 +496,7 @@ class LiteAvatarGenerator(VideoGenerator):
             self._producer = asyncio.create_task(self._produce())
         epoch = self._epoch
         last: np.ndarray | None = None  # the last picture shown in the current reply
+        waited = 0  # frames shown since the current reply's audio all played, waiting for the producer to end it
         while True:
             if epoch != self._epoch:  # interrupted
                 epoch, last = self._epoch, None
@@ -453,31 +504,49 @@ class LiteAvatarGenerator(VideoGenerator):
                 ep, reply, i, payload = self._out.get_nowait()
             except asyncio.QueueEmpty:
                 cur = self._playing
+                if cur is None and self._voice_may_start():
+                    # the next reply's first frame is late: start its voice over the idle video, the lips follow
+                    cur = self._playing = self._producing
+                    self._played, last, waited = 0, None, 0
+                    cur.voice_first = True
                 # whole chunks only while audio is still arriving (a partial one would be padded with silence and
                 # the rest of it skipped); the reply's last chunk once it has all arrived
-                if cur is not None and last is not None:
+                if cur is not None:
                     whole = (self._played + 1) * self._spf <= len(cur.audio)
                     last_bit = cur.ended and self._played * self._spf < len(cur.audio)
                 else:
                     whole = last_bit = False
                 if whole or last_bit:
                     # the next frame isn't drawn yet: keep the voice going on the last picture
-                    yield self._vf(last)
+                    yield self._vf(self._hold(last))
                     if epoch == self._epoch and self._playing is cur:
                         yield self._af(cur.audio, self._played)
                         self._played += 1
                     continue
+                if cur is not None and cur.ended:
+                    # all of its audio has played and the producer is behind. Give it a moment (it may be about to
+                    # hand over the frames that close the mouth), then end the reply, so the agent hears that
+                    # playback finished when it did, not once the renderer has caught up
+                    waited += 1
+                    if waited > END_WAIT_FRAMES:
+                        cur.finished = True
+                        self._playing, last, waited = None, None, 0
+                        yield AudioSegmentEnd()
+                        continue
+                    yield self._vf(self._hold(last))
+                    continue
                 yield self._vf(self._s.move(self._s.idle_frame(self._k), self._k, 0.0))
                 self._k += 1
                 continue
-            if ep != self._epoch:
+            if ep != self._epoch or (reply is not None and reply.finished):  # stale, or a reply already ended
                 continue
+            waited = 0
             if payload is _END:
                 cur = self._playing
-                if cur is not None and reply is cur and last is not None:
+                if cur is not None and reply is cur:
                     # frames skipped at the very end of the reply: their audio still plays, on the last picture
                     while self._played * self._spf < len(cur.audio):
-                        yield self._vf(last)
+                        yield self._vf(self._hold(last))
                         if epoch != self._epoch or self._playing is not cur:
                             break
                         yield self._af(cur.audio, self._played)
@@ -489,8 +558,8 @@ class LiteAvatarGenerator(VideoGenerator):
                 self._playing, self._played, last = reply, 0, None
             if i < self._played:  # its audio already played over an earlier picture
                 continue
-            while self._played < i and last is not None:  # frames the producer skipped to catch up
-                yield self._vf(last)
+            while self._played < i:  # frames the producer skipped to catch up
+                yield self._vf(self._hold(last))
                 if epoch != self._epoch or self._playing is not reply:
                     break
                 yield self._af(reply.audio, self._played)

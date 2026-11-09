@@ -84,10 +84,15 @@ async def _visit(stack, greeting_s: float) -> dict:
         # now talk: a microphone track carrying a recorded sentence, in real time, then silence
         source = rtc.AudioSource(RATE, 1)
         mic = rtc.LocalAudioTrack.create_audio_track("mic", source)
+        listened = asyncio.Event()
+        room.on("local_track_subscribed", lambda track: listened.set() if track.sid == mic.sid else None)
         await room.local_participant.publish_track(
             mic, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         )
-        await asyncio.sleep(1.0)
+        # start talking once the agent is listening, as a person would wait for it to be ready (on a busy machine
+        # subscribing can take more than a second, and words said before that never reach it)
+        await asyncio.wait_for(listened.wait(), timeout=30)
+        await asyncio.sleep(0.5)
         said, _ = sf.read(DEMO / "audio" / "now.flac", dtype="int16")
         talk_at = time.time()
         for f in _frames(np.concatenate([said, np.zeros(RATE * 2, np.int16)])):

@@ -144,10 +144,17 @@ renderer worker is one process serving one session:
    plays.
 
 Each window is 1 s of speech plus 0.5 s of lookahead, and windows advance by 0.8 s, so a reply starts drawing once
-1.6 s of its audio has arrived (the first window, its lookahead and a 0.1 s margin). Most TTS runs well ahead of real time, so that is almost at once, and
-the first frames are ready about 0.3 s later. With TTS that streams only at real-time pace, the reply starts about
-1.6 s after its first audio and then keeps up without skipping. If drawing does fall behind (a slow CPU), the next
-audio plays over the last picture and the frames it missed are skipped, so the voice never waits for the face.
+1.6 s of its audio has arrived (the first window, its lookahead and a 0.1 s margin). Most TTS runs well ahead of
+real time, so that is almost at once, and the first frames are ready about 0.3 s later. With TTS that streams only
+at real-time pace, the reply starts about 1.6 s after its first audio and then keeps up without skipping.
+
+If drawing falls behind (a slow or overloaded CPU), the voice still starts and ends on time:
+
+- the next audio plays over the last picture, and the frames it missed are skipped;
+- if a reply's first frame isn't ready 1 s after there was audio enough to draw it, the voice starts over the idle
+  video and the lips join when frames are ready in time;
+- a reply ends as soon as its audio has played, even if frames are still being drawn, so the agent hears that
+  playback finished on time and the conversation moves on.
 
 ## Performance
 
