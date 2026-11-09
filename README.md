@@ -154,7 +154,8 @@ If drawing falls behind (a slow or overloaded CPU), the voice still starts and e
 - if a reply's first frame isn't ready 1 s after there was audio enough to draw it, the voice starts over the idle
   video and the lips join when frames are ready in time;
 - a reply ends as soon as its audio has played, even if frames are still being drawn, so the agent hears that
-  playback finished on time and the conversation moves on.
+  playback finished on time and the conversation moves on;
+- if drawing fails, the rest of that reply's voice still plays, and the next reply has its face back.
 
 ## Performance
 

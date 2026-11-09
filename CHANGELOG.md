@@ -8,9 +8,10 @@
   been drawn (30 s for a 5.5 s reply on a busy CI runner). Now the voice starts at most 1 s after there is audio
   enough to draw, over the idle video if need be. The reply ends as soon as its audio has played, and the frames
   still being drawn for it are dropped.
-- The renderer takes in the agent's audio, and the end of each reply, before every window it draws, not only once it
-  has caught up.
-- After a renderer error, a reply that had already ended isn't ended a second time.
+- The renderer takes in the agent's audio as it arrives, not between the windows it draws. A voice that has run
+  ahead of the face no longer runs dry (and comes out stretched) while a slow window is being drawn.
+- A renderer error no longer cuts a reply short: the rest of its voice plays without new frames, the reply ends once,
+  and the next reply has its face back.
 - The browser demo's test waits for the agent to subscribe to its microphone before it talks.
 
 ## [0.1.0] - 2026-11-08
