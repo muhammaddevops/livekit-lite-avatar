@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.2] - 2026-11-14
 
 **Changed**
 - Tested with livekit-agents 1.8.12 (with livekit 1.2.1): the renderer now pins it. Its avatar code is unchanged from
