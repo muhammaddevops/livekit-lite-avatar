@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+**Fixed**
+- Tests: on machines far behind real time (`LITEAVATAR_PERF_CHECKS=0`), the fall-back-to-voice test lets the agent's
+  own voice arrive stretched by CPU starvation, never cut short, like the other live tests.
+
 ## [0.1.2] - 2026-11-14
 
 **Changed**

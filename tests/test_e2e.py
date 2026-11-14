@@ -95,4 +95,6 @@ def test_agent_falls_back_to_voice_when_the_avatar_leaves(tmp_path):
     first, second = out["speech"]
     assert first["heard_from"] == "avatar"
     assert second["heard_from"] == "agent", "the second reply wasn't heard at all"
-    assert abs(second["audible_s"] - second["wav_audible_s"]) < 0.25
+    # heard in full; on a machine far behind real time (LITEAVATAR_PERF_CHECKS=0) it may arrive stretched, as above
+    assert second["audible_s"] > second["wav_audible_s"] - 0.25, "the second reply was cut short"
+    assert second["audible_s"] < second["wav_audible_s"] + (0.25 if PERF else 2.5), "the second reply was stretched"
