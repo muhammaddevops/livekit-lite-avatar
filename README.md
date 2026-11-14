@@ -11,10 +11,10 @@ no GPU, no avatar vendor and no per-minute fees. It plugs into an `AgentSession`
 plugins do (Tavus, Hedra, Simli and others) and draws the face with Alibaba's
 [LiteAvatar](https://github.com/HumanAIGC/lite-avatar) models.
 
-<p align="center">
-  <img src="docs/demo.gif" width="300" alt="An avatar speaking in a LiveKit call, lips in sync with its voice"><br>
-  <sub>Recorded from a participant in a live LiveKit call, drawn on a laptop's CPU. <a href="docs/demo.mp4">With sound</a>.</sub>
-</p>
+https://github.com/user-attachments/assets/3137f60e-73f8-4574-b09a-d3afd9772127
+
+<p align="center"><sub>Sound on. The avatar is one continuous take, as a participant received it in a live LiveKit call,
+drawn on a laptop's CPU (Apple M4 Pro).</sub></p>
 
 ```python
 from livekit_lite_avatar import LiteAvatarSession
@@ -348,8 +348,9 @@ of November 2026. Check upstream, or get written permission from Alibaba, before
 presenters commercially. The `sample` presenter ships inside the MIT-licensed repository, but whether that licence
 is meant to cover it isn't stated either. This is not legal advice.
 
-Other files in this repository:
-- `docs/demo.*` and `examples/local_demo/audio/` use the `sample` presenter and a voice made with
+Other media and files:
+- The demo video at the top shows the default presenter, one of the gallery presenters in the table above. Its
+  voice, like the clips in `examples/local_demo/audio/`, was made with
   [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0).
 - `src/livekit_lite_avatar/renderer/mouth_pcs.npy` holds four 32-value vectors, used by `LITEAVATAR_OPEN_GAIN`.
   This project computed them from audio2mouth's output on test speech; they contain no LiteAvatar weights.

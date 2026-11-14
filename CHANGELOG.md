@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+**Changed**
+- README: the demo is now a 30-second video with sound, recorded from a live call, in place of the silent GIF. The
+  old clip and GIF are gone from `docs/`.
+
 **Fixed**
 - Tests: on machines far behind real time (`LITEAVATAR_PERF_CHECKS=0`), the fall-back-to-voice test lets the agent's
   own voice arrive stretched by CPU starvation, never cut short, like the other live tests.
