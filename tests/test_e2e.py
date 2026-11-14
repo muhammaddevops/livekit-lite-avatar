@@ -9,6 +9,7 @@ the first plays in full, the second is interrupted 1.5 s after the avatar starts
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ from livekit_lite_avatar.renderer.settings import Settings
 
 SETTINGS = Settings.from_env()
 pytestmark = [
+    pytest.mark.skipif(importlib.util.find_spec("torch") is None, reason="needs the renderer extra"),
     pytest.mark.skipif(shutil.which("livekit-server") is None, reason="livekit-server not installed"),
     pytest.mark.skipif(bool(assets.check(SETTINGS)), reason="renderer assets not installed"),
 ]
@@ -31,7 +33,6 @@ PERF = os.getenv("LITEAVATAR_PERF_CHECKS", "1") != "0"
 
 @pytest.fixture(scope="module")
 def result(tmp_path_factory):
-    pytest.importorskip("torch", reason="needs the renderer extra")
     import run as e2e
 
     from livekit_lite_avatar.renderer.offline import default_wav

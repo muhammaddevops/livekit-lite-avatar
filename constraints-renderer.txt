@@ -48,11 +48,11 @@ joblib==1.6.0
 json-repair==0.63.5
 lazy-loader==0.6
 librosa==0.10.2
-livekit==1.2.0
-livekit-agents==1.8.11
+livekit==1.2.1
+livekit-agents==1.8.12
 livekit-api==1.2.2
 livekit-blingfire==1.2.0
-livekit-local-inference==0.2.7
+livekit-local-inference==0.3.1
 livekit-protocol==1.1.31
 llvmlite==0.50.0
 loguru==0.7.3

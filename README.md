@@ -302,7 +302,7 @@ These are off by default, because in a live call they looked worse overall. Try 
   frames can be drawn. See [Performance](#performance).
 - **Startup.** A worker takes from about 7 s (M4 Pro) to a minute to load, which is why one is kept warm. If none
   is free, the renderer waits up to 45 s for one, then the agent gets a `LiteAvatarError`.
-- **Versions.** The agent side needs `livekit-agents` 1.8.x. The renderer pins 1.8.11, because it builds on some
+- **Versions.** The agent side needs `livekit-agents` 1.8.x. The renderer pins 1.8.12, because it builds on some
   of its internals: `AvatarRunner`'s publishing (to send a single layer), the data-stream receiver, and RoomIO's
   audio output for the fall-back to voice. The stream wrapper calls LiteAvatar's internals, so LiteAvatar is pinned
   to a tested commit. The renderer runs on Python 3.10 (3.11 and 3.12 should work, untested).

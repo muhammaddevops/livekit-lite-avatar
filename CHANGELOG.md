@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+**Changed**
+- Tested with livekit-agents 1.8.12 (with livekit 1.2.1): the renderer now pins it. Its avatar code is unchanged from
+  1.8.11, and the whole suite passes with the timing checks on. The agent side already accepted any 1.8.x.
+
+**Fixed**
+- Tests: the live end-to-end tests skip themselves without the renderer extra. One of them used to run and fail on
+  an agent-side-only install, on a machine with `livekit-server` and the renderer's assets.
+
 ## [0.1.1] - 2026-11-09
 
 Fixes for renderers far behind real time. On a machine that keeps up, nothing changes.
