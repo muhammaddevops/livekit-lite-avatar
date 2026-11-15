@@ -239,6 +239,12 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
     heard_s = float(span[loud].sum())
     print(f"heard {heard_s:.1f} s of the greeting")
     assert heard_s > 10, f"only {heard_s:.1f} s of the greeting was heard"
+    # the mouth moves with the voice (the quiet frames include the short pauses inside the greeting, where it is still
+    # closing), and rests before the greeting and once it is over
     mouth = np.array([x["open"] for x in frames])
-    assert mouth[loud].mean() > 3 * max(0.01, mouth[~loud].mean()), "the mouth doesn't move with the voice"
+    print(f"mouth open {mouth[loud].mean():.2f} while the voice sounds, {mouth[~loud].mean():.2f} otherwise")
+    assert mouth[loud].mean() > max(0.1, 2 * mouth[~loud].mean()), "the mouth doesn't move with the voice"
+    first, last = t[loud][0], t[loud][-1]
+    assert mouth[t < first - 0.5].max(initial=0) < 0.05, "the mouth moved before the agent spoke"
+    assert mouth[t > last + 0.8].max(initial=0) < 0.05, "the mouth kept moving after the agent stopped"
     assert np.array([x["speaking"] for x in frames])[loud].mean() > 0.6
