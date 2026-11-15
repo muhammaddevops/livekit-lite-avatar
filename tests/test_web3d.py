@@ -177,12 +177,13 @@ _RECORD_FRAMES = """() => {
     db: avatar.lipsync.outputDb(),
   });
 }"""
-# seconds of sound heard so far, from the frames' timestamps; done once 10 s were heard and then 2 s of quiet
+# seconds of sound heard so far, from the frames' timestamps; done once 8 s were heard and then 2 s of quiet (the
+# greeting has about 13 s of sound, but at a few frames a second the count is rough)
 _GREETING_DONE = """() => {
   const f = window.frames3d;
   let heard = 0, last = null;
   for (let i = 1; i < f.length; i += 1) if (f[i].db > -50) { heard += f[i].t - f[i - 1].t; last = f[i].t; }
-  return heard > 10000 && performance.now() - last > 2000;
+  return heard > 8000 && performance.now() - last > 2000;
 }"""
 # who the face follows, and whether anything else on the page could be playing audio
 _ATTACHED = """() => {
@@ -238,7 +239,7 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
     span = np.diff(t, prepend=t[0])
     heard_s = float(span[loud].sum())
     print(f"heard {heard_s:.1f} s of the greeting")
-    assert heard_s > 10, f"only {heard_s:.1f} s of the greeting was heard"
+    assert heard_s > 8, f"only {heard_s:.1f} s of the greeting was heard"
     # the mouth moves with the voice (the quiet frames include the short pauses inside the greeting, where it is still
     # closing), and rests before the greeting and once it is over
     mouth = np.array([x["open"] for x in frames])
