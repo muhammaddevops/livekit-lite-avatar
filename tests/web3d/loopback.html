@@ -115,7 +115,9 @@ window.run = async ({ clip, via = "webrtc", leadS = 1.5, tailS = 1.5 }) => {
       db: lipsync.outputDb(),
     });
   }, 33);
-  await new Promise((r) => setTimeout(r, leadS * 1000));
+  // let it run for leadS before the clip: counted in steps, because a fresh browser on a busy machine can hold the
+  // first ones up while it warms up its audio
+  while (frames.length * 33 < leadS * 1000) await new Promise((r) => setTimeout(r, 50));
   const playedAt = link.play();
   await new Promise((r) => setTimeout(r, (buffer.duration + tailS) * 1000));
   clearInterval(timer);
