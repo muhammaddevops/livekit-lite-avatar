@@ -218,10 +218,10 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
             .with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name="liteavatar-demo")]))
             .to_jwt()
         )
-        # low quality at a few frames a second: on a runner without a GPU each frame is drawn in software, and the
-        # page must stay free to handle the click and the agent's audio
+        # low quality at 2 frames a second: on a runner without a GPU each frame is drawn in software, and waiting
+        # for it blocks the page, which must stay free to join the call and attach the agent's voice in time
         page = _page(
-            browser, site, f"/examples/local_demo/3d.html?quality=low&maxFps=8#url={stack.lk_url}&token={token}"
+            browser, site, f"/examples/local_demo/3d.html?quality=low&maxFps=2#url={stack.lk_url}&token={token}"
         )
         page.wait_for_function("window.avatar !== undefined && !document.getElementById('start').disabled")
         page.evaluate(_RECORD)
