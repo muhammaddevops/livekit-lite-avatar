@@ -143,8 +143,8 @@ def test_lip_sync_follows_the_voice(browser, site, via, request):
     speaking = np.array([x["speaking"] for x in f])
     during = (rel > 0) & (rel < r["durationS"] + 0.4)
     before = rel < -0.1
-    print(f"\n{via}: {len(f)} frames, {r['stats']}")
-    assert before.sum() > 5 and during.sum() > 40, "too few frames were drawn"
+    print(f"\n{via}: {len(f)} frames")
+    assert before.sum() > 20 and during.sum() > 100, "the lip-sync wasn't stepped every 33 ms"
 
     # the voice plays, DELAY_MS late (plus a little for the WebRTC jitter buffer)
     lags = range(0, 451, 25)
@@ -167,6 +167,33 @@ def test_lip_sync_follows_the_voice(browser, site, via, request):
     assert max(x["brow"] for x in f) > 0.3, "the brows never lifted"
 
 
+_RECORD_FRAMES = """() => {
+  const OPEN = ["viseme_aa", "viseme_E", "viseme_I", "viseme_O", "viseme_U", "jawOpen"];
+  window.frames3d = [];
+  avatar.onFrame = (f) => window.frames3d.push({
+    t: f.now,
+    speaking: f.speaking,
+    open: OPEN.reduce((a, n) => a + (f.values[n] ?? 0), 0),
+    db: avatar.lipsync.outputDb(),
+  });
+}"""
+# seconds of sound heard so far, from the frames' timestamps; done once 10 s were heard and then 2 s of quiet
+_GREETING_DONE = """() => {
+  const f = window.frames3d;
+  let heard = 0, last = null;
+  for (let i = 1; i < f.length; i += 1) if (f[i].db > -50) { heard += f[i].t - f[i - 1].t; last = f[i].t; }
+  return heard > 10000 && performance.now() - last > 2000;
+}"""
+# who the face follows, and whether anything else on the page could be playing audio
+_ATTACHED = """() => {
+  const t = avatar.track;
+  const mine = (p) => [...p.trackPublications.values()].some((x) => x.track === t);
+  const p = [...room.remoteParticipants.values()].find(mine);
+  const audioElements = document.querySelectorAll("audio").length;
+  return { identity: p?.identity ?? null, agent: p?.isAgent ?? null, audioElements };
+}"""
+
+
 @pytest.mark.skipif(shutil.which("livekit-server") is None, reason="livekit-server not installed")
 @pytest.mark.skipif(importlib.util.find_spec("soundfile") is None, reason="the demo agent needs soundfile")
 def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
@@ -184,32 +211,20 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
             .with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name="liteavatar-demo")]))
             .to_jwt()
         )
-        page = _page(browser, site, f"/examples/local_demo/3d.html#url={stack.lk_url}&token={token}")
-        page.wait_for_function("window.avatar !== undefined && !document.getElementById('start').disabled")
-        page.evaluate(
-            "(() => { window.frames3d = []; avatar.onFrame = (f) => window.frames3d.push({ t: f.now,"
-            " speaking: f.speaking, open: ['viseme_aa', 'viseme_E', 'viseme_I', 'viseme_O', 'viseme_U', 'jawOpen']"
-            ".reduce((a, n) => a + (f.values[n] ?? 0), 0), db: avatar.lipsync.outputDb() }); })()"
+        # low quality at a few frames a second: on a runner without a GPU each frame is drawn in software, and the
+        # page must stay free to handle the click and the agent's audio
+        page = _page(
+            browser, site, f"/examples/local_demo/3d.html?quality=low&maxFps=8#url={stack.lk_url}&token={token}"
         )
-        page.click("#start")
+        page.wait_for_function("window.avatar !== undefined && !document.getElementById('start').disabled")
+        page.evaluate(_RECORD_FRAMES)
+        page.evaluate("document.getElementById('start').click()")
         # the greeting: three recorded lines, about 15 s of speech; done once 2 s pass without sound after speech
         deadline = time.time() + 90
-        while time.time() < deadline:
+        while time.time() < deadline and not page.evaluate(_GREETING_DONE):
             time.sleep(0.5)
-            done = page.evaluate(
-                "(() => { const f = window.frames3d; let heard = 0, last = null;"
-                " for (let i = 1; i < f.length; i += 1) if (f[i].db > -50) { heard += f[i].t - f[i - 1].t; last = f[i].t; }"
-                " return heard > 10000 && performance.now() - last > 2000; })()"
-            )
-            if done:
-                break
         frames = page.evaluate("window.frames3d")
-        attached = page.evaluate(
-            "(() => { const t = avatar.track; const p = [...room.remoteParticipants.values()]"
-            ".find((p) => [...p.trackPublications.values()].some((pub) => pub.track === t));"
-            " return { identity: p?.identity ?? null, agent: p?.isAgent ?? null,"
-            " audioElements: document.querySelectorAll('audio').length }; })()"
-        )
+        attached = page.evaluate(_ATTACHED)
         page.close()
     finally:
         stack.stop()

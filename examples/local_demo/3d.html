@@ -78,8 +78,12 @@
   }
 
   // the face is on screen (resting, blinking) before anyone joins; it plays and lip-syncs the agent's voice once
-  // there is one. Nothing else on this page plays that voice.
-  const avatar = await createAvatar3D($("face"));
+  // there is one. Nothing else on this page plays that voice. For a slow machine: 3d.html?quality=low&maxFps=15
+  const query = new URLSearchParams(location.search);
+  const avatar = await createAvatar3D($("face"), {
+    quality: query.get("quality") ?? "high",
+    maxFps: Number(query.get("maxFps") ?? 30),
+  });
   window.avatar = avatar;
   $("placeholder").hidden = true;
   $("start").disabled = false;

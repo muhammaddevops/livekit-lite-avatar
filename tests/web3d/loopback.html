@@ -15,11 +15,16 @@
 <body>
 <canvas id="face"></canvas>
 <script type="module">
-// Used by tests/test_web3d.py. A recorded line goes through an in-page WebRTC connection (Opus), so the avatar gets a
-// remote MediaStreamTrack, like the one livekit-client gives for the agent's voice. Per drawn frame it records how
-// open the mouth is, whether it counts as speaking and how loud the voice it plays is, with the clip's own loudness
-// for comparison. Times are performance.now() ms.
+// Used by tests/test_web3d.py.
+// run(): a recorded line goes to the lip-sync as a local track, or through an in-page WebRTC connection (Opus), like
+// the remote track livekit-client gives for the agent's voice. Every 33 ms it records how open the mouth is, whether
+// it counts as speaking, the brow lift and how loud the voice it plays is, with the clip's own loudness for
+// comparison. It runs the lip-sync without drawing, so its timing doesn't depend on how fast this machine draws (on
+// a CI runner without a GPU, a few frames a second): still() and the live demo test cover the drawing.
+// Times are performance.now() ms.
 import { createAvatar3D } from "/web/src/index.js";
+import { Expression } from "/web/src/expression.js";
+import { LipSync } from "/web/src/lipsync.js";
 
 const OPEN = ["viseme_aa", "viseme_E", "viseme_I", "viseme_O", "viseme_U", "jawOpen"];
 
@@ -86,35 +91,37 @@ window.probe = async () => {
 window.errors = [];
 window.addEventListener("error", (e) => window.errors.push(String(e.message)));
 
-window.run = async ({ clip, via = "webrtc", quality = "low", leadS = 1.5, tailS = 1.5 }) => {
+window.run = async ({ clip, via = "webrtc", leadS = 1.5, tailS = 1.5 }) => {
   const bytes = await (await fetch(clip)).arrayBuffer();
   const buffer = await new AudioContext().decodeAudioData(bytes);
   const link = await loopback(buffer, via);
   if (link.failed) return { skipped: link.failed };
+  // the same parts Avatar3D wires together, stepped every 33 ms as its frame loop does at 30 fps
+  const expression = new Expression();
+  const lipsync = new LipSync({ onAudio: (t, samples, sr) => expression.push(t, samples, sr) });
+  await lipsync.attach(link.track);
+  await lipsync.resume();
   const frames = [];
-  const avatar = await createAvatar3D(document.getElementById("face"), {
-    quality,
-    width: 256,
-    height: 320,
-    onFrame: ({ values, speaking, expression, now }) => frames.push({
+  let last = performance.now();
+  const timer = setInterval(() => {
+    const now = performance.now();
+    const { values, speaking, heardMs } = lipsync.frame(now - last);
+    last = now;
+    frames.push({
       t: now,
       open: OPEN.reduce((a, n) => a + (values[n] ?? 0), 0),
-      closed: (values.viseme_PP ?? 0) + (values.mouthPressLeft ?? 0),
       speaking,
-      brow: expression.brow,
-      db: avatar.lipsync.outputDb(),
-    }),
-  });
-  window.avatar = avatar;
-  await avatar.attach(link.track);
-  await avatar.resumeAudio();
+      brow: expression.at(heardMs).brow,
+      db: lipsync.outputDb(),
+    });
+  }, 33);
   await new Promise((r) => setTimeout(r, leadS * 1000));
   const playedAt = link.play();
   await new Promise((r) => setTimeout(r, (buffer.duration + tailS) * 1000));
-  const stats = avatar.stats();
+  clearInterval(timer);
   link.close();
-  avatar.destroy();
-  return { playedAt, durationS: buffer.duration, envelope: envelope(buffer), frames, stats, errors: window.errors };
+  lipsync.close();
+  return { playedAt, durationS: buffer.duration, envelope: envelope(buffer), frames, errors: window.errors };
 };
 
 window.still = async ({ quality = "high", width = 512, height = 640 }) => {
