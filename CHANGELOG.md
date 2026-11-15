@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-15
+
+A second style: a 3D face drawn in the browser from the agent's voice, free for commercial use. The video style
+is unchanged.
 
 **Added**
 - The 3D style (`web/`): a 3D face drawn in the browser and lip-synced to the agent's voice. There's no renderer and

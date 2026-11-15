@@ -75,7 +75,7 @@ keeps one spare loaded. Or run the [Docker image](#docker).
 **2. Install the package where your agent runs.** It is small and doesn't need torch:
 
 ```bash
-pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git@v0.1.2"
+pip install "livekit-lite-avatar @ git+https://github.com/muhammaddevops/livekit-lite-avatar.git@v0.2.0"
 ```
 
 **3. Start the avatar with your session.**
@@ -151,7 +151,7 @@ The same demo agent greets you and repeats what you say, but publishes its own v
 ### Add it to your page
 
 The face is an ES module in [`web/`](web/) that uses [three.js](https://threejs.org) 0.186.1. Without a bundler,
-give the page an import map for three.js and load the module from jsDelivr (pin a release tag in production):
+give the page an import map for three.js and load the module from jsDelivr, pinned to a release:
 
 ```html
 <canvas id="face" style="width: 320px; aspect-ratio: 4 / 5"></canvas>
@@ -162,7 +162,7 @@ give the page an import map for three.js and load the module from jsDelivr (pin 
     "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/" } }
 </script>
 <script type="module">
-  import { createAvatar3D } from "https://cdn.jsdelivr.net/gh/muhammaddevops/livekit-lite-avatar@main/web/src/index.js";
+  import { createAvatar3D } from "https://cdn.jsdelivr.net/gh/muhammaddevops/livekit-lite-avatar@v0.2.0/web/src/index.js";
 
   const avatar = await createAvatar3D(document.getElementById("face"));  // on screen, resting, straight away
   avatar.follow(room);  // your livekit-client Room: lip-syncs (and plays) the agent's voice when it arrives
@@ -386,7 +386,7 @@ secret on the agent side), and keep it behind a firewall: the secret is its only
 
 ```bash
 docker run -p 8791:8791 -v liteavatar-data:/data -e LITEAVATAR_SECRET=change-me \
-  ghcr.io/muhammaddevops/livekit-lite-avatar-renderer:0.1.2
+  ghcr.io/muhammaddevops/livekit-lite-avatar-renderer:0.2.0
 ```
 
 Published for linux/amd64 and linux/arm64 with each release (or `docker build -t livekit-lite-avatar-renderer .`).

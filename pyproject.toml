@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "livekit-lite-avatar"
-version = "0.1.2"
+version = "0.2.0"
 description = "Lip-synced avatars for LiveKit Agents: a self-hosted, CPU-only LiteAvatar video avatar, or a 3D face drawn in the browser"
 readme = "README.md"
 license = "Apache-2.0"
