@@ -167,23 +167,29 @@ def test_lip_sync_follows_the_voice(browser, site, via, request):
     assert max(x["brow"] for x in f) > 0.3, "the brows never lifted"
 
 
-_RECORD_FRAMES = """() => {
-  const OPEN = ["viseme_aa", "viseme_E", "viseme_I", "viseme_O", "viseme_U", "jawOpen"];
+_RECORD = """async () => {
+  // the lip-sync, sampled every 50 ms whatever the drawing rate (a few frames a second, or one, on a runner without a
+  // GPU): the voice's loudness, the mouth the model chose for what is heard now, and whether it counts as speaking
+  const { buildSegments, mouthAt, isSpeakingAt } = await import("/web/vendor/talking-avatar/talking-avatar-core.js");
+  const OPEN = ["aa", "E", "I", "O", "U"];
+  window.samples3d = [];
   window.frames3d = [];
-  avatar.onFrame = (f) => window.frames3d.push({
-    t: f.now,
-    speaking: f.speaking,
-    open: OPEN.reduce((a, n) => a + (f.values[n] ?? 0), 0),
-    db: avatar.lipsync.outputDb(),
-  });
+  setInterval(() => {
+    const ls = avatar.lipsync, now = ls.heardMs(), ev = ls.events;
+    const w = ev.length ? mouthAt(buildSegments(ev), now) : {};
+    window.samples3d.push({
+      t: performance.now(), db: ls.outputDb(), open: OPEN.reduce((a, n) => a + (w[n] ?? 0), 0),
+      speaking: ev.length > 0 && isSpeakingAt(ev, now),
+    });
+  }, 50);
+  // and the face as drawn
+  avatar.onFrame = (f) => window.frames3d.push({ t: f.now, open: (f.values.viseme_aa ?? 0) + (f.values.jawOpen ?? 0) });
 }"""
-# seconds of sound heard so far, from the frames' timestamps; done once 8 s were heard and then 2 s of quiet (the
-# greeting has about 13 s of sound, but at a few frames a second the count is rough)
-_GREETING_DONE = """() => {
-  const f = window.frames3d;
-  let heard = 0, last = null;
-  for (let i = 1; i < f.length; i += 1) if (f[i].db > -50) { heard += f[i].t - f[i - 1].t; last = f[i].t; }
-  return heard > 8000 && performance.now() - last > 2000;
+# the greeting's first to last sound so far (s), and whether 2 s have passed since the last
+_GREETING = """() => {
+  const loud = window.samples3d.filter((x) => x.db > -50);
+  if (!loud.length) return { span: 0, quiet: 0 };
+  return { span: (loud.at(-1).t - loud[0].t) / 1000, quiet: (performance.now() - loud.at(-1).t) / 1000 };
 }"""
 # who the face follows, and whether anything else on the page could be playing audio
 _ATTACHED = """() => {
@@ -218,12 +224,17 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
             browser, site, f"/examples/local_demo/3d.html?quality=low&maxFps=8#url={stack.lk_url}&token={token}"
         )
         page.wait_for_function("window.avatar !== undefined && !document.getElementById('start').disabled")
-        page.evaluate(_RECORD_FRAMES)
+        page.evaluate(_RECORD)
         page.evaluate("document.getElementById('start').click()")
-        # the greeting: three recorded lines, about 15 s of speech; done once 2 s pass without sound after speech
+        # the greeting: three recorded lines, about 16 s from the first sound to the last; done once it has lasted
+        # 13 s and then 2 s have passed in quiet
         deadline = time.time() + 90
-        while time.time() < deadline and not page.evaluate(_GREETING_DONE):
+        while time.time() < deadline:
+            g = page.evaluate(_GREETING)
+            if g["span"] > 13 and g["quiet"] > 2:
+                break
             time.sleep(0.5)
+        samples = page.evaluate("window.samples3d")
         frames = page.evaluate("window.frames3d")
         attached = page.evaluate(_ATTACHED)
         page.close()
@@ -233,19 +244,28 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
     print("\nattached:", attached, "frames:", len(frames))
     assert attached["agent"] is True, f"the face followed {attached['identity']}, not the agent"
     assert attached["audioElements"] == 0, "something else on the page plays audio"
-    t = np.array([x["t"] for x in frames]) / 1000
-    db = np.array([x["db"] for x in frames])
+    t = np.array([x["t"] for x in samples]) / 1000
+    db = np.array([x["db"] for x in samples])
+    mouth = np.array([x["open"] for x in samples])
+    speaking = np.array([x["speaking"] for x in samples])
     loud = db > -50
-    span = np.diff(t, prepend=t[0])
-    heard_s = float(span[loud].sum())
-    print(f"heard {heard_s:.1f} s of the greeting")
-    assert heard_s > 8, f"only {heard_s:.1f} s of the greeting was heard"
-    # the mouth moves with the voice (the quiet frames include the short pauses inside the greeting, where it is still
-    # closing), and rests before the greeting and once it is over
-    mouth = np.array([x["open"] for x in frames])
-    print(f"mouth open {mouth[loud].mean():.2f} while the voice sounds, {mouth[~loud].mean():.2f} otherwise")
-    assert mouth[loud].mean() > max(0.1, 2 * mouth[~loud].mean()), "the mouth doesn't move with the voice"
+    assert loud.any(), "the agent's voice never played"
     first, last = t[loud][0], t[loud][-1]
-    assert mouth[t < first - 0.5].max(initial=0) < 0.05, "the mouth moved before the agent spoke"
-    assert mouth[t > last + 0.8].max(initial=0) < 0.05, "the mouth kept moving after the agent stopped"
-    assert np.array([x["speaking"] for x in frames])[loud].mean() > 0.6
+    within = (t >= first) & (t <= last)
+    print(
+        f"greeting {last - first:.1f} s from first to last sound, sounding {loud[within].mean():.0%} of it;"
+        f" {len(frames)} frames drawn"
+    )
+    # all of it heard (16 s from the first sound to the last), not cut short or played in pieces
+    assert last - first > 13, f"the greeting lasted {last - first:.1f} s"
+    assert loud[within].mean() > 0.5, "the voice dropped out"
+    # the mouth follows the voice, and rests before and after it
+    print(
+        f"mouth open {mouth[loud].mean():.2f} while the voice sounds, {mouth[~loud & within].mean():.2f} in its pauses"
+    )
+    assert mouth[loud].mean() > max(0.15, 2 * mouth[~loud & within].mean()), "the mouth doesn't follow the voice"
+    assert mouth[t < first - 0.3].max(initial=0) < 0.05, "the mouth moved before the agent spoke"
+    assert mouth[t > last + 0.5].max(initial=0) < 0.05, "the mouth kept moving after the agent stopped"
+    assert speaking[loud].mean() > 0.6 and not speaking[t < first - 0.3].any()
+    # and the face as drawn moved its mouth
+    assert max((x["open"] for x in frames), default=0) > 0.1, "the drawn face never opened its mouth"

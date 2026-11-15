@@ -16,6 +16,7 @@ is unchanged.
   - On an Apple M4 Pro in Chromium: 30 fps, about 1 ms of main-thread time per frame for drawing, and 5 to 6% of
     one core for the lip-sync model.
 - The zero-key demo has a 3D page: `examples/local_demo/run.py --style 3d`. It needs no renderer setup.
+- README: a 23-second video of Nora with sound, recorded live in Chromium.
 - Tests in headless Chromium (`tests/test_web3d.py`), and a CI job that runs them:
   - the face draws;
   - the voice plays 150 ms late, and the mouth follows it and rests in silence, over a local track and an in-page

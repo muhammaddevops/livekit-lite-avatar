@@ -129,10 +129,10 @@ A 3D face drawn in the viewer's browser and lip-synced to the agent's voice. Not
 agent stays exactly as it is, in Python or Node.js, with any text-to-speech: the page receives the agent's audio as
 it always does, and the face plays it.
 
-<p align="center"><img src="docs/3d-style.jpg" width="800" alt="Nora, the 3D face: at rest, speaking, lifting her
-brows on a stressed word, and speaking"></p>
-<p align="center"><sub>Nora, from a live lip-sync run in Chromium: at rest, speaking, brows lifted on a stressed
-word, speaking. She also blinks, glances about and sways a little.</sub></p>
+https://github.com/user-attachments/assets/8165128e-c0c4-4f03-82c3-719b418545e4
+
+<p align="center"><sub>Sound on. Nora, recorded live in Chromium on an Apple M4 Pro as she lip-syncs to a voice track,
+in one take. She also blinks, glances about, sways a little and lifts her brows on stressed words.</sub></p>
 
 ### Try the 3D style
 
@@ -495,7 +495,7 @@ Other media and files:
 - The demo video at the top shows the default presenter, one of the gallery presenters in the table above. Its
   voice, like the clips in `examples/local_demo/audio/`, was made with
   [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0).
-- `docs/3d-style.jpg` shows Nora (CC0), drawn by this project.
+- The 3D style's video shows Nora (CC0), drawn by this project. Its voice was made with Kokoro too.
 - `src/livekit_lite_avatar/renderer/mouth_pcs.npy` holds four 32-value vectors, used by `LITEAVATAR_OPEN_GAIN`.
   This project computed them from audio2mouth's output on test speech; they contain no LiteAvatar weights.
 
