@@ -6,10 +6,19 @@
 ![livekit-agents 1.8](https://img.shields.io/badge/livekit--agents-1.8-blue)
 [![Release](https://img.shields.io/github/v/release/muhammaddevops/livekit-lite-avatar)](https://github.com/muhammaddevops/livekit-lite-avatar/releases)
 
-A lip-synced video avatar for [LiveKit Agents](https://github.com/livekit/agents) that you host yourself, on CPU:
-no GPU, no avatar vendor and no per-minute fees. It plugs into an `AgentSession` the way LiveKit's hosted avatar
-plugins do (Tavus, Hedra, Simli and others) and draws the face with Alibaba's
-[LiteAvatar](https://github.com/HumanAIGC/lite-avatar) models.
+A lip-synced avatar for [LiveKit Agents](https://github.com/livekit/agents) with no GPU, no avatar vendor and no
+per-minute fees. It comes in two styles:
+
+| | **Video** (LiteAvatar) | **[3D, in the browser](#the-3d-style)** |
+|---|---|---|
+| Looks like | a real person | a 3D character |
+| Drawn by | a renderer you run, on CPU | each viewer's browser |
+| Reaches the room as | a video track, like a camera | nothing extra: the page lip-syncs the agent's voice |
+| You add | a renderer, and two lines in your agent | a component in your web page; the agent doesn't change |
+| Commercial use | check first: LiteAvatar's face weights have no stated licence | free: a CC0 face, MIT and Apache-2.0 code |
+
+The video style plugs into an `AgentSession` the way LiveKit's hosted avatar plugins do (Tavus, Hedra, Simli and
+others) and draws the face with Alibaba's [LiteAvatar](https://github.com/HumanAIGC/lite-avatar) models:
 
 https://github.com/user-attachments/assets/3137f60e-73f8-4574-b09a-d3afd9772127
 
@@ -33,8 +42,8 @@ await avatar.start(session, room=ctx.room)
 - **Tested end to end.** CI runs a real `AgentSession`, the renderer and a measuring viewer on a local LiveKit
   server, on Linux x86, Linux ARM and macOS.
 
-Status: alpha. Read [Licences](#licences) before any commercial use: LiteAvatar's face weights and presenters have no
-stated licence.
+Status: alpha. Read [Licences](#licences) before any commercial use of the video style: LiteAvatar's face weights
+and presenters have no stated licence.
 
 ## Try it without any accounts or keys
 
@@ -48,7 +57,8 @@ brew install livekit             # the open-source LiveKit server; on Linux: cur
 The demo starts a private LiveKit server with throwaway keys, the renderer and a small agent, and opens a page in
 your browser. The agent needs no speech-to-text, LLM or text-to-speech: it greets you with three recorded lines,
 then repeats whatever you say into your microphone, lip-synced. Your voice takes the same path a TTS reply would.
-Add `--presenter sample` for the presenter in the clip above.
+`--presenter sample` uses the presenter that comes with LiteAvatar's code. For the 3D style, which needs no renderer
+and no download, see [Try the 3D style](#try-the-3d-style).
 
 ## Use it in your agent
 
@@ -113,7 +123,123 @@ const room = new Room({ adaptiveStream: false });          // livekit-client
 <LiveKitRoom options={{ adaptiveStream: false }} ... />     // @livekit/components-react
 ```
 
-## How it works
+## The 3D style
+
+A 3D face drawn in the viewer's browser and lip-synced to the agent's voice. Nothing runs on a server for it, and the
+agent stays exactly as it is, in Python or Node.js, with any text-to-speech: the page receives the agent's audio as
+it always does, and the face plays it.
+
+<p align="center"><img src="docs/3d-style.jpg" width="800" alt="Nora, the 3D face: at rest, speaking, lifting her
+brows on a stressed word, and speaking"></p>
+<p align="center"><sub>Nora, from a live lip-sync run in Chromium: at rest, speaking, brows lifted on a stressed
+word, speaking. She also blinks, glances about and sways a little.</sub></p>
+
+### Try the 3D style
+
+No renderer and no model download, just this package, `soundfile` for the demo's recordings, and `livekit-server`:
+
+```bash
+git clone https://github.com/muhammaddevops/livekit-lite-avatar.git && cd livekit-lite-avatar
+python3 -m venv .venv && .venv/bin/pip install -e . soundfile
+brew install livekit             # on Linux: curl -sSL https://get.livekit.io | bash
+.venv/bin/python examples/local_demo/run.py --style 3d
+```
+
+The same demo agent greets you and repeats what you say, but publishes its own voice, as any agent does, and
+[`examples/local_demo/3d.html`](examples/local_demo/3d.html) draws the face from it.
+
+### Add it to your page
+
+The face is an ES module in [`web/`](web/) that uses [three.js](https://threejs.org) 0.186.1. Without a bundler,
+give the page an import map for three.js and load the module from jsDelivr (pin a release tag in production):
+
+```html
+<canvas id="face" style="width: 320px; aspect-ratio: 4 / 5"></canvas>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/" } }
+</script>
+<script type="module">
+  import { createAvatar3D } from "https://cdn.jsdelivr.net/gh/muhammaddevops/livekit-lite-avatar@main/web/src/index.js";
+
+  const avatar = await createAvatar3D(document.getElementById("face"));  // on screen, resting, straight away
+  avatar.follow(room);  // your livekit-client Room: lip-syncs (and plays) the agent's voice when it arrives
+  // in the click that joins the call, so the browser allows sound:
+  joinButton.onclick = async () => { await avatar.resumeAudio(); await room.connect(url, token); };
+</script>
+```
+
+The face plays the agent's voice itself, 150 ms late so the mouth can move into each sound. **Don't also play that
+track**: no `track.attach()` for it, and no `<RoomAudioRenderer />` in a React app, or the voice plays twice.
+
+With a bundler, `npm install three@0.186.1` and copy [`web/`](web/) into your app: it isn't on npm yet, and it
+has no build step. With `@livekit/components-react`, in a component inside `<LiveKitRoom>`:
+
+```jsx
+import { useRoomContext } from "@livekit/components-react";
+import { useEffect, useRef } from "react";
+import { createAvatar3D } from "./livekit-lite-avatar-3d/src/index.js"; // web/ from this repository
+
+export function AgentFace() {
+  const room = useRoomContext();
+  const canvas = useRef(null);
+  useEffect(() => {
+    let avatar, gone = false;
+    createAvatar3D(canvas.current).then((a) => (gone ? a.destroy() : ((avatar = a), a.follow(room))));
+    return () => { gone = true; avatar?.destroy(); };
+  }, [room]);
+  return <canvas ref={canvas} style={{ width: 320, aspectRatio: "4 / 5" }} />;
+}
+```
+
+`createAvatar3D(canvas, options)` resolves once the face is on screen:
+
+| Option | Default | |
+|---|---|---|
+| `width`, `height` | 512, 640 | drawing size in CSS pixels (style the canvas to scale it) |
+| `quality` | `"high"` | `"low"` drops ambient occlusion and supersampling, for slower devices |
+| `maxFps` | 30 | |
+| `delayMs` | 150 | how late the voice plays; less is snappier, rougher lip-sync |
+| `volume` | 1 | also `avatar.setVolume()` |
+| `top`, `background` | `"#4f6f92"`, `"gradient"` | the T-shirt colour; a CSS colour instead of the gradient |
+| `smile`, `browLift`, `nod` | 0.12, 0.35, 0.035 | expression strength (0 turns one off) |
+| `faceUrl`, `modelUrl` | next to the module | to serve the face (4.5 MB) and the lip-sync model (1 MB) from elsewhere |
+| `onFrame` | | called with each frame's mouth shapes, for meters or tests |
+
+The avatar has `follow(room, { identity })` (the agent by default; returns a function that stops following),
+`attach(track)` and `detach()` for a track you pick yourself (a livekit-client track, a `MediaStreamTrack` or a
+`MediaStream`), `resumeAudio()`, `setVolume()`, `resize(width, height)`, `stats()`, `speaking` and `destroy()`.
+
+### How the 3D style works
+
+```
+the agent's audio track ─> capture (AudioWorklet) ─> lip-sync model ─> mouth shapes, timed to when they'll be heard
+                        └─> 150 ms delay ─> speakers               └─> loudness ─> brows and nods on stressed words
+every frame: the mouth shapes for what is being heard now, blinks, glances and sway ─> three.js ─> the canvas
+```
+
+- **Lip-sync:** the model, viseme detector, coarticulation and mouth mapping of
+  [talking-avatar](https://www.npmjs.com/package/@interviewflowai/talking-avatar) 0.3.0 (MIT), pinned in
+  [`web/vendor/talking-avatar`](web/vendor/talking-avatar/VENDOR.md). It was chosen from four browser lip-sync
+  libraries compared on the same face, in English and in Arabic mixed with English: its lips met on 80% (English)
+  and 89% (Arabic) of p, b and m sounds, against 20% or less for the other audio-driven ones, with the smoothest
+  motion, unchanged after Opus. The lips land 30 to 50 ms ahead of the voice, the direction people forgive.
+- **Expression:** a stress is a loudness peak at least 4 dB above the last 1.5 s of speech; it lifts the brows
+  (at most once per 0.9 s), and the strongest add a small nod.
+- **Cost**, measured in Chromium on an Apple M4 Pro: a steady 30 fps; about 1 ms of main-thread time per frame for
+  drawing (the GPU does the rest) and 5 to 6% of one core for the lip-sync model. Downloads: the face 4.5 MB, the
+  model 1 MB, three.js about 400 KB gzipped.
+- **Tested** in headless Chromium in CI: the voice plays 150 ms late, the mouth follows it and rests in silence,
+  over a real WebRTC connection; and the demo page in a live call on a local LiveKit server
+  ([`tests/test_web3d.py`](tests/test_web3d.py)).
+
+**Limits.** A 3D character, head and shoulders, not a real person. It isn't a video track, so room recordings
+(Egress) don't show it, only pages that include it. It needs WebGL 2 and AudioWorklet (current browsers). The skin
+shading is written for three.js r186; on another version the skin falls back to standard shading, with a warning.
+
+## How the video style works
 
 ```mermaid
 sequenceDiagram
@@ -327,13 +453,30 @@ registers and is dispatched like a production agent, and a viewer that measures 
 Offline tests play the worker's output at real-time pace in four situations: TTS faster than real time, TTS at
 real-time pace, a CPU too slow for real time, and a reply right after an interruption. In each, the reply's audio
 must come out bit-identical and without a pause. The server is tested against fake workers that load, fail to join,
-or die while loading. Another test drives the browser demo's agent with a synthetic microphone. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for more.
+or die while loading. Another test drives the browser demo's agent with a synthetic microphone.
+
+The 3D style's tests run in headless Chromium and skip themselves without Playwright:
+
+```bash
+.venv/bin/pip install playwright soundfile && .venv/bin/python -m playwright install chromium
+.venv/bin/pytest tests/test_web3d.py
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for more.
 
 ## Licences
 
-This project's code is licensed under the Apache License 2.0 (see `LICENSE`). It downloads, but does not include,
-LiteAvatar's parts, whose licences differ:
+This project's code is licensed under the Apache License 2.0 (see `LICENSE`).
+
+**The 3D style** is free for commercial use, all of it included in [`web/`](web/):
+
+| Part | Licence |
+|---|---|
+| Nora, the face (`web/assets/nora.glb`): built with MakeHuman's MPFB from community assets, on TalkingHead's rig | CC0 ([details and sources](web/assets/NOTICE.md)) |
+| talking-avatar 0.3.0: the lip-sync model and code (`web/vendor/talking-avatar`) | MIT ([licence](web/vendor/talking-avatar/LICENSE)) |
+| three.js 0.186.1, loaded by the page | MIT |
+
+**The video style** downloads, but does not include, LiteAvatar's parts, whose licences differ:
 
 | Part | Where it comes from | Licence |
 |---|---|---|
@@ -352,6 +495,7 @@ Other media and files:
 - The demo video at the top shows the default presenter, one of the gallery presenters in the table above. Its
   voice, like the clips in `examples/local_demo/audio/`, was made with
   [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0).
+- `docs/3d-style.jpg` shows Nora (CC0), drawn by this project.
 - `src/livekit_lite_avatar/renderer/mouth_pcs.npy` holds four 32-value vectors, used by `LITEAVATAR_OPEN_GAIN`.
   This project computed them from audio2mouth's output on test speech; they contain no LiteAvatar weights.
 
@@ -361,4 +505,7 @@ Other media and files:
 [Paraformer](https://modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch)
 and [FunASR](https://github.com/modelscope/FunASR); [LiveKit Agents](https://github.com/livekit/agents), whose
 avatar data-stream and A/V sync classes this builds on; and [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) for
-the demo's voice.
+the demo's voice. For the 3D style: [talking-avatar](https://www.npmjs.com/package/@interviewflowai/talking-avatar)
+by InterviewFlowAI for the lip-sync, [TalkingHead](https://github.com/met4citizen/TalkingHead) by Mika Suominen for
+the rig and face shapes, [MakeHuman](https://www.makehumancommunity.org) and its community's CC0 assets for the face,
+and [three.js](https://threejs.org).

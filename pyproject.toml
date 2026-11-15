@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "livekit-lite-avatar"
 version = "0.1.2"
-description = "Self-hosted, CPU-only, lip-synced LiteAvatar video avatar for LiveKit Agents"
+description = "Lip-synced avatars for LiveKit Agents: a self-hosted, CPU-only LiteAvatar video avatar, or a 3D face drawn in the browser"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Muhammad Tumi" }]
-keywords = ["livekit", "livekit-agents", "avatar", "lip-sync", "talking-head", "liteavatar", "voice-ai"]
+keywords = ["livekit", "livekit-agents", "avatar", "lip-sync", "talking-head", "liteavatar", "3d", "voice-ai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -72,7 +72,7 @@ liteavatar-renderer = "livekit_lite_avatar.renderer.__main__:main"
 packages = ["src/livekit_lite_avatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "examples", "tests", "scripts", "README.md", "LICENSE", "constraints-renderer.txt"]
+include = ["src", "web", "examples", "tests", "scripts", "README.md", "LICENSE", "constraints-renderer.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

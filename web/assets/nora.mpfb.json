@@ -1,0 +1,44 @@
+{
+ "note": "Nora: the approved Maya 2 (improvement loop, step 10) under her own name; after building, compress and bake the hair colour (see README)",
+ "phenotype": {
+  "gender": 0.0,
+  "age": 0.45,
+  "proportions": 0.65,
+  "weight": 0.45
+ },
+ "skin": "callharvey3d_midtoned_female",
+ "hair": "toigo_curled_under_bob",
+ "eyebrows": "mindfront_eyebrows_12",
+ "eyelashes": "mindfront_eyelashes_02",
+ "clothes": [
+  "toigo_basic_tucked_t-shirt"
+ ],
+ "hips_height": 1.0,
+ "targets": [
+  {
+   "target": "l-eye-scale-incr",
+   "value": 0.35
+  },
+  {
+   "target": "r-eye-scale-incr",
+   "value": 0.35
+  },
+  {
+   "target": "head-oval",
+   "value": 0.3
+  },
+  {
+   "target": "nose-scale-horiz-decr",
+   "value": 0.3
+  },
+  {
+   "target": "mouth-upperlip-volume-incr",
+   "value": 0.3
+  },
+  {
+   "target": "chin-height-decr",
+   "value": 0.25
+  }
+ ],
+ "name": "Nora"
+}

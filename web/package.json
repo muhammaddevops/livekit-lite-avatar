@@ -1,0 +1,36 @@
+{
+  "name": "livekit-lite-avatar-3d",
+  "version": "0.2.0",
+  "description": "A 3D talking face for LiveKit agents, drawn in the browser and lip-synced to the agent's voice: no renderer, no video track, nothing to change in the agent.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "assets",
+    "vendor"
+  ],
+  "sideEffects": false,
+  "peerDependencies": {
+    "three": "0.186.1"
+  },
+  "keywords": [
+    "livekit",
+    "livekit-agents",
+    "avatar",
+    "lip-sync",
+    "talking-head",
+    "three",
+    "voice-ai"
+  ],
+  "license": "Apache-2.0 AND MIT AND CC0-1.0",
+  "author": "Muhammad Tumi",
+  "homepage": "https://github.com/muhammaddevops/livekit-lite-avatar#the-3d-style",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muhammaddevops/livekit-lite-avatar.git",
+    "directory": "web"
+  },
+  "bugs": "https://github.com/muhammaddevops/livekit-lite-avatar/issues"
+}

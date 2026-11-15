@@ -1,12 +1,19 @@
 """Demo agent with no STT, LLM or TTS: it greets you with three recorded lines, then repeats what you say.
 
-Your voice goes through the same path a TTS reply would (session.say -> data stream -> renderer), so you see the
-avatar lip-sync to your own speech. Started by run.py next to it; the greeting was made with Kokoro (Apache-2.0).
+Your voice goes through the same path a TTS reply would, so you see the avatar lip-sync to your own speech. Started
+by run.py next to it; the greeting was made with Kokoro (Apache-2.0).
+
+DEMO_STYLE picks the avatar:
+- "video" (default): the LiteAvatar renderer draws the face and publishes it as video (session.say -> data stream ->
+  renderer -> the room).
+- "3d": no avatar here at all. The agent publishes its own voice, as any agent does, and the web page draws a 3D face
+  that lip-syncs to it (web/, examples/local_demo/3d.html).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from collections import deque
@@ -34,6 +41,15 @@ GREETING = [
     ),
     ("now.flac", "Now say something, and I will repeat it, lip-synced."),
 ]
+GREETING_3D = [
+    (
+        "hello_3d.flac",
+        "Hi! I'm a LiveKit agent, and this face is drawn right here, in your browser. No video, and no extra server.",
+    ),
+    ("how_3d.flac", "Your browser hears my voice, and moves my lips to it, so the agent stays exactly as it was."),
+    ("now_3d.flac", "Now say something, and I will repeat it, lip-synced."),
+]
+STYLE = os.getenv("DEMO_STYLE", "video")
 RATE = 24000
 FRAME_MS = 20
 SPEECH_DB = -45.0  # louder than this counts as speech
@@ -122,14 +138,25 @@ async def mic_track(room: rtc.Room, person: rtc.RemoteParticipant) -> rtc.Remote
 async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession()
     await ctx.connect()
-    avatar = LiteAvatarSession(presenter=os.getenv("DEMO_PRESENTER") or None, avatar_participant_name="Avatar")
-    await avatar.start(session, room=ctx.room)
+    heard = asyncio.Event()  # someone subscribed to the agent's own voice (the 3D page)
+    ctx.room.on("local_track_subscribed", lambda track: heard.set() if track.kind == rtc.TrackKind.KIND_AUDIO else None)
+    avatar = None
+    if STYLE != "3d":
+        avatar = LiteAvatarSession(presenter=os.getenv("DEMO_PRESENTER") or None, avatar_participant_name="Avatar")
+        await avatar.start(session, room=ctx.room)
     await session.start(
         agent=Agent(instructions="Demo agent."),
         room=ctx.room,
         room_options=room_io.RoomOptions(audio_input=False, text_input=False),
     )
-    await avatar.wait_for_join(timeout=120)
+    if avatar:
+        await avatar.wait_for_join(timeout=120)
+        await asyncio.sleep(1.0)
+    else:
+        # the page draws the face from the agent's voice: start once it is listening
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(heard.wait(), timeout=30)
+        await asyncio.sleep(0.5)
     busy = asyncio.Event()
 
     async def say(text: str, audio: np.ndarray) -> None:
@@ -141,8 +168,7 @@ async def entrypoint(ctx: JobContext) -> None:
         finally:
             busy.clear()
 
-    await asyncio.sleep(1.0)
-    for name, text in GREETING:
+    for name, text in GREETING_3D if STYLE == "3d" else GREETING:
         await say(text, load(name))
 
     person = await ctx.wait_for_participant()  # a person, not the avatar (an agent-kind participant)

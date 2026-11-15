@@ -30,6 +30,9 @@ keeps the functional checks and skips the timing ones.
 | `test_offline.py` | WAV in, MP4 out; the worker's generator at real-time pace with fast TTS, real-time TTS, a simulated slow CPU, and a reply after an interruption |
 | `test_e2e.py` | livekit-server, renderer, a real `AgentSession` and a viewer: publishing, playback, interruption, and the fall-back to voice when the avatar leaves |
 | `test_demo.py` | the browser demo's agent: greeting, then repeating a microphone track |
+| `test_web3d.py` | the 3D style in headless Chromium: the face draws; the voice plays 150 ms late and the mouth follows it (a local track, and in-page WebRTC with Opus); the 3D demo page in a live call. Needs `pip install playwright soundfile && python -m playwright install chromium`. The WebRTC tests skip where the browser can't connect (a VPN as the default route, say); CI sets `LITEAVATAR_REQUIRE_WEBRTC=1` so they can't. |
+
+The 3D style's JavaScript has no build step. `node --check web/src/*.js` checks its syntax (CI does too).
 
 For performance work, `scripts/profile_renderer.py` splits the time per second of speech into speech features,
 audio-to-mouth and the face decoder, and `scripts/benchmark.py` measures a live call from a viewer.

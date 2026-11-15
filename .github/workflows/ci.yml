@@ -22,6 +22,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3  # an exact version: setup-uv publishes no major tags
       - run: uvx ruff@0.17.4 check src tests examples scripts
       - run: uvx ruff@0.17.4 format --check src tests examples scripts
+      - name: Syntax of the 3D style's modules
+        run: for f in web/src/*.js; do node --check "$f"; done
 
   agent:
     name: agent side (Python ${{ matrix.python }})
@@ -46,6 +48,41 @@ jobs:
         run: |
           uv build
           uvx twine check --strict dist/*
+
+  web3d:
+    name: 3D style in a browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # an exact version: setup-uv publishes no major tags
+        with:
+          cache-python: true
+      - name: Install livekit-server
+        run: |
+          image=livekit/livekit-server:v1.13.11
+          docker pull -q "$image"
+          entry=$(docker inspect --format '{{index .Config.Entrypoint 0}}' "$image")
+          docker create --name lk "$image" >/dev/null
+          sudo docker cp "lk:$entry" /usr/local/bin/livekit-server
+          docker rm lk >/dev/null
+          livekit-server --version
+      - name: Install the agent side (no torch), the demo's soundfile, Playwright and its Chromium
+        run: |
+          uv venv -p 3.12 .venv
+          uv pip install -p .venv/bin/python -e ".[dev]" "soundfile>=0.12" "playwright>=1.50"
+          .venv/bin/python -m playwright install --with-deps chromium
+      - name: Tests in headless Chromium, including a live call on a local LiveKit server
+        env:
+          LITEAVATAR_REQUIRE_WEBRTC: "1"  # here the browser can make WebRTC connections: don't let those tests skip
+        run: .venv/bin/pytest -p no:warnings -rA --basetemp="$RUNNER_TEMP/pytest" tests/test_web3d.py
+      - name: Keep the process logs of failed live tests
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-web3d
+          path: ${{ runner.temp }}/pytest/**/*.log
+          if-no-files-found: ignore
 
   renderer:
     name: renderer, live e2e and benchmark (${{ matrix.os }})

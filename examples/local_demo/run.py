@@ -4,9 +4,11 @@ Starts, on this machine only: a LiveKit server (the open-source `livekit-server`
 renderer, and a demo agent that greets you and then repeats what you say, lip-synced. Then opens a web page.
 
     .venv/bin/python examples/local_demo/run.py [--presenter sample]
+    .venv/bin/python examples/local_demo/run.py --style 3d      # the 3D face, drawn in the browser: no renderer
 
-Needs `livekit-server` on PATH (macOS: brew install livekit; Linux: curl -sSL https://get.livekit.io | bash) and
-the renderer set up (scripts/setup-renderer.sh). Ctrl-C stops everything.
+Needs `livekit-server` on PATH (macOS: brew install livekit; Linux: curl -sSL https://get.livekit.io | bash). The
+video style also needs the renderer set up (scripts/setup-renderer.sh); the 3D style needs only this package and
+soundfile. Ctrl-C stops everything.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from pathlib import Path
 from livekit import api
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]  # the page for the 3D style loads web/ from the repository
 KEY = "demo"
 SECRET = secrets.token_urlsafe(32)  # throwaway: this server only lives as long as the demo
 
@@ -55,6 +58,7 @@ def wait_until(check, timeout: float, what: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--style", choices=["video", "3d"], default="video", help="the LiteAvatar video, or the 3D face")
     ap.add_argument("--presenter", help="installed presenter to use (default: the renderer's default)")
     ap.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
     ns = ap.parse_args()
@@ -77,17 +81,20 @@ def main() -> None:
     lk_url = f"ws://localhost:{ws}"
     renderer_url = f"http://127.0.0.1:{renderer_port}"
     try:
-        print("Starting a local LiveKit server, the renderer and the demo agent ...", flush=True)
+        video = ns.style == "video"
+        parts = "the renderer and the demo agent" if video else "and the demo agent"
+        print(f"Starting a local LiveKit server, {parts} ...", flush=True)
         config = (
             f"port: {ws}\nrtc:\n  tcp_port: {tcp}\n  udp_port: {udp}\n  use_external_ip: false\n"
             f"keys:\n  {KEY}: {SECRET}\nlogging:\n  level: warn\n"
         )
         spawn("livekit-server", [exe, "--config-body", config, "--bind", "127.0.0.1", "--node-ip", "127.0.0.1"])
-        spawn(
-            "renderer",
-            [sys.executable, "-m", "livekit_lite_avatar.renderer", "serve"],
-            {"LITEAVATAR_PORT": str(renderer_port)},
-        )
+        if video:
+            spawn(
+                "renderer",
+                [sys.executable, "-m", "livekit_lite_avatar.renderer", "serve"],
+                {"LITEAVATAR_PORT": str(renderer_port)},
+            )
         wait_until(lambda: urllib.request.urlopen(f"http://127.0.0.1:{ws}", timeout=1).status == 200, 30, "LiveKit")
         agent_env = {
             "LIVEKIT_URL": lk_url,
@@ -95,6 +102,7 @@ def main() -> None:
             "LIVEKIT_API_SECRET": SECRET,
             "LITEAVATAR_RENDERER_URL": renderer_url,
             "DEMO_PRESENTER": ns.presenter or "",
+            "DEMO_STYLE": ns.style,
         }
         spawn("agent", [sys.executable, str(HERE / "agent.py"), "start", "--log-level", "info"], agent_env)
 
@@ -102,14 +110,22 @@ def main() -> None:
             with urllib.request.urlopen(f"{renderer_url}/health", timeout=1) as r:
                 return json.loads(r.read())["ready"] >= 1
 
-        wait_until(renderer_ready, 180, "the renderer to load its models")
+        if video:
+            wait_until(renderer_ready, 180, "the renderer to load its models")
         wait_until(lambda: "registered worker" in (logs / "agent.log").read_text(), 60, "the agent to register")
 
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args) -> None:
                 pass
 
-        handler = functools.partial(Quiet, directory=str(HERE))
+            def send_head(self):
+                # the demo pages and the 3D avatar's files only, not the rest of the repository
+                if not self.path.startswith(("/examples/local_demo/", "/web/")) or ".." in self.path:
+                    self.send_error(404)
+                    return None
+                return super().send_head()
+
+        handler = functools.partial(Quiet, directory=str(ROOT))
         httpd = http.server.ThreadingHTTPServer(("127.0.0.1", web_port), handler)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
@@ -121,7 +137,8 @@ def main() -> None:
             .with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name="liteavatar-demo")]))
             .to_jwt()
         )
-        url = f"http://localhost:{web_port}/#url={lk_url}&token={token}"
+        page = "index.html" if video else "3d.html"
+        url = f"http://localhost:{web_port}/examples/local_demo/{page}#url={lk_url}&token={token}"
         print(f"\nReady. Open:\n  {url}\n\nLogs: {logs}\nCtrl-C to stop.", flush=True)
         if not ns.no_browser:
             webbrowser.open(url)

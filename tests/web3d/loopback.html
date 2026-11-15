@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>3D avatar: loopback test</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/" } }
+</script>
+<style>body { margin: 0; background: #222; } canvas { width: 256px; height: 320px; }</style>
+</head>
+<body>
+<canvas id="face"></canvas>
+<script type="module">
+// Used by tests/test_web3d.py. A recorded line goes through an in-page WebRTC connection (Opus), so the avatar gets a
+// remote MediaStreamTrack, like the one livekit-client gives for the agent's voice. Per drawn frame it records how
+// open the mouth is, whether it counts as speaking and how loud the voice it plays is, with the clip's own loudness
+// for comparison. Times are performance.now() ms.
+import { createAvatar3D } from "/web/src/index.js";
+
+const OPEN = ["viseme_aa", "viseme_E", "viseme_I", "viseme_O", "viseme_U", "jawOpen"];
+
+async function loopback(buffer, via) {
+  const ctx = new AudioContext();
+  const dest = ctx.createMediaStreamDestination();
+  const play = () => {
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(dest);
+    src.start();
+    return performance.now() + (ctx.baseLatency || 0) * 1000;
+  };
+  if (via === "local") return { track: dest.stream.getAudioTracks()[0], play, close: () => ctx.close() };
+  const pcA = new RTCPeerConnection();
+  const pcB = new RTCPeerConnection();
+  pcA.onicecandidate = (e) => e.candidate && pcB.addIceCandidate(e.candidate);
+  pcB.onicecandidate = (e) => e.candidate && pcA.addIceCandidate(e.candidate);
+  const remote = new Promise((ok) => { pcB.ontrack = (e) => ok(e.track); });
+  pcA.addTrack(dest.stream.getAudioTracks()[0], dest.stream);
+  await pcA.setLocalDescription(await pcA.createOffer());
+  await pcB.setRemoteDescription(pcA.localDescription);
+  await pcB.setLocalDescription(await pcB.createAnswer());
+  await pcA.setRemoteDescription(pcB.localDescription);
+  const track = await remote;
+  for (let i = 0; i < 100 && pcB.connectionState !== "connected"; i += 1) await new Promise((r) => setTimeout(r, 50));
+  const close = () => { pcA.close(); pcB.close(); ctx.close(); };
+  if (pcB.connectionState !== "connected") {
+    close();
+    return { failed: `the in-page WebRTC connection didn't connect (${pcB.connectionState})` };
+  }
+  return { track, play, close };
+}
+
+/** The clip's loudness (dBFS) every 40 ms. */
+function envelope(buffer) {
+  const x = buffer.getChannelData(0);
+  const hop = Math.round(buffer.sampleRate * 0.04);
+  const out = [];
+  for (let i = 0; i + hop <= x.length; i += hop) {
+    let s = 0;
+    for (let j = i; j < i + hop; j += 1) s += x[j] * x[j];
+    out.push(10 * Math.log10(s / hop + 1e-10));
+  }
+  return out;
+}
+
+/** Whether this browser can make a WebRTC connection at all (two peers in the page, a data channel). */
+window.probe = async () => {
+  const pcA = new RTCPeerConnection(), pcB = new RTCPeerConnection();
+  pcA.onicecandidate = (e) => e.candidate && pcB.addIceCandidate(e.candidate);
+  pcB.onicecandidate = (e) => e.candidate && pcA.addIceCandidate(e.candidate);
+  pcA.createDataChannel("probe");
+  await pcA.setLocalDescription(await pcA.createOffer());
+  await pcB.setRemoteDescription(pcA.localDescription);
+  await pcB.setLocalDescription(await pcB.createAnswer());
+  await pcA.setRemoteDescription(pcB.localDescription);
+  for (let i = 0; i < 100 && pcA.connectionState !== "connected"; i += 1) await new Promise((r) => setTimeout(r, 50));
+  const ok = pcA.connectionState === "connected";
+  pcA.close(); pcB.close();
+  return ok;
+};
+
+window.errors = [];
+window.addEventListener("error", (e) => window.errors.push(String(e.message)));
+
+window.run = async ({ clip, via = "webrtc", quality = "low", leadS = 1.5, tailS = 1.5 }) => {
+  const bytes = await (await fetch(clip)).arrayBuffer();
+  const buffer = await new AudioContext().decodeAudioData(bytes);
+  const link = await loopback(buffer, via);
+  if (link.failed) return { skipped: link.failed };
+  const frames = [];
+  const avatar = await createAvatar3D(document.getElementById("face"), {
+    quality,
+    width: 256,
+    height: 320,
+    onFrame: ({ values, speaking, expression, now }) => frames.push({
+      t: now,
+      open: OPEN.reduce((a, n) => a + (values[n] ?? 0), 0),
+      closed: (values.viseme_PP ?? 0) + (values.mouthPressLeft ?? 0),
+      speaking,
+      brow: expression.brow,
+      db: avatar.lipsync.outputDb(),
+    }),
+  });
+  window.avatar = avatar;
+  await avatar.attach(link.track);
+  await avatar.resumeAudio();
+  await new Promise((r) => setTimeout(r, leadS * 1000));
+  const playedAt = link.play();
+  await new Promise((r) => setTimeout(r, (buffer.duration + tailS) * 1000));
+  const stats = avatar.stats();
+  link.close();
+  avatar.destroy();
+  return { playedAt, durationS: buffer.duration, envelope: envelope(buffer), frames, stats, errors: window.errors };
+};
+
+window.still = async ({ quality = "high", width = 512, height = 640 }) => {
+  const canvas = document.getElementById("face");
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const avatar = await createAvatar3D(canvas, { quality, width, height, preserveDrawingBuffer: true });
+  window.avatar = avatar;
+  await new Promise((r) => setTimeout(r, 1500));
+  return { stats: avatar.stats(), errors: window.errors };
+};
+window.ready = true;
+</script>
+</body>
+</html>

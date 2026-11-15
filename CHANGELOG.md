@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+**Added**
+- The 3D style (`web/`): a 3D face drawn in the browser and lip-synced to the agent's voice. There's no renderer and
+  no video track, and nothing changes in the agent. A page calls `createAvatar3D(canvas)` and `avatar.follow(room)`.
+  - The face is Nora (CC0, built with MakeHuman's MPFB on TalkingHead's rig), drawn with three.js 0.186.1. She has
+    ambient occlusion, skin and eye shading, blinks, glances, a slight sway, and brows and nods that follow stressed
+    words.
+  - The lip-sync is talking-avatar 0.3.0's model and mouth mapping (MIT, pinned in `web/vendor`). The voice plays
+    150 ms late so the mouth can move into each sound.
+  - On an Apple M4 Pro in Chromium: 30 fps, about 1 ms of main-thread time per frame for drawing, and 5 to 6% of
+    one core for the lip-sync model.
+- The zero-key demo has a 3D page: `examples/local_demo/run.py --style 3d`. It needs no renderer setup.
+- Tests in headless Chromium (`tests/test_web3d.py`), and a CI job that runs them:
+  - the face draws;
+  - the voice plays 150 ms late, and the mouth follows it and rests in silence, over a local track and an in-page
+    WebRTC connection;
+  - the demo page in a live call on a local LiveKit server.
+
 **Changed**
 - README: the demo is now a 30-second video with sound, recorded from a live call, in place of the silent GIF. The
   old clip and GIF are gone from `docs/`.

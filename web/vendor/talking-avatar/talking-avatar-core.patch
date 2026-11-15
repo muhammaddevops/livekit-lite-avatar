@@ -1,0 +1,16 @@
+627c627,635
+<   Ne as T
+---
+>   Ne as T,
+>   // bake-off patch: also export the internals (names from the source map)
+>   I as VisemeDetector,
+>   ke as parseVisemeModel,
+>   R as loadVisemeModel,
+>   X as buildSegments,
+>   q as mouthAt,
+>   ee as isSpeakingAt,
+>   ye as AvatarRenderer
+629c637
+< //# sourceMappingURL=TalkingAvatar-C1bLAM_K.js.map
+---
+> 
