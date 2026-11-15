@@ -13,7 +13,6 @@ DEMO_STYLE picks the avatar:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 from collections import deque
@@ -138,8 +137,6 @@ async def mic_track(room: rtc.Room, person: rtc.RemoteParticipant) -> rtc.Remote
 async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession()
     await ctx.connect()
-    heard = asyncio.Event()  # someone subscribed to the agent's own voice (the 3D page)
-    ctx.room.on("local_track_subscribed", lambda track: heard.set() if track.kind == rtc.TrackKind.KIND_AUDIO else None)
     avatar = None
     if STYLE != "3d":
         avatar = LiteAvatarSession(presenter=os.getenv("DEMO_PRESENTER") or None, avatar_participant_name="Avatar")
@@ -153,10 +150,10 @@ async def entrypoint(ctx: JobContext) -> None:
         await avatar.wait_for_join(timeout=120)
         await asyncio.sleep(1.0)
     else:
-        # the page draws the face from the agent's voice: start once it is listening
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(heard.wait(), timeout=30)
-        await asyncio.sleep(0.5)
+        # the page draws the face from the agent's own voice. RoomIO holds that audio until someone has subscribed to
+        # it; a moment more lets the page attach it before the first word
+        await ctx.wait_for_participant()
+        await asyncio.sleep(1.5)
     busy = asyncio.Event()
 
     async def say(text: str, audio: np.ndarray) -> None:
@@ -169,7 +166,9 @@ async def entrypoint(ctx: JobContext) -> None:
             busy.clear()
 
     for name, text in GREETING_3D if STYLE == "3d" else GREETING:
+        logger.info("greeting: %s", name)
         await say(text, load(name))
+    logger.info("greeting done")
 
     person = await ctx.wait_for_participant()  # a person, not the avatar (an agent-kind participant)
     track = await mic_track(ctx.room, person)

@@ -256,6 +256,21 @@ def test_demo_3d_page_follows_the_agent(browser, site, webrtc, tmp_path):
         f"greeting {last - first:.1f} s from first to last sound, sounding {loud[within].mean():.0%} of it;"
         f" {len(frames)} frames drawn"
     )
+    # when the sound arrived, in stretches (pauses under 0.6 s merged), seconds after the page started sampling
+    stretches, start, end = [], None, None
+    for ti, li in zip(t - t[0], loud, strict=True):
+        if li and start is not None and ti - end > 0.6:
+            stretches.append((round(start, 1), round(end, 1)))
+            start = None
+        if li:
+            start = ti if start is None else start
+            end = ti
+    if start is not None:
+        stretches.append((round(start, 1), round(end, 1)))
+    print("sound arrived:", stretches)
+    log = tmp_path / "agent.log"
+    if log.exists():
+        print("agent:", [ln[:200] for ln in log.read_text().splitlines() if "greeting" in ln])
     # all of it heard (16 s from the first sound to the last), not cut short or played in pieces
     assert last - first > 13, f"the greeting lasted {last - first:.1f} s"
     assert loud[within].mean() > 0.5, "the voice dropped out"
